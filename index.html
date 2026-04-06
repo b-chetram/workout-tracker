@@ -1,0 +1,736 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<title>CBum Tracker</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+body{font-family:-apple-system,'Helvetica Neue',sans-serif;background:#0d0d0d;color:#fff;min-height:100vh;max-width:480px;margin:0 auto;padding-bottom:100px}
+button{cursor:pointer;font-family:inherit;border:none;outline:none}
+input{font-family:inherit;-webkit-appearance:none;outline:none}
+input[type=number]::-webkit-inner-spin-button{-webkit-appearance:none}
+.view{display:none}.view.active{display:block}
+
+/* ── TOPBAR ── */
+.topbar{background:#111;padding:14px 16px 0;border-bottom:1px solid #222;position:sticky;top:0;z-index:200}
+.tb-row{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}
+.app-title{font-size:21px;font-weight:900;letter-spacing:-.5px}
+.app-sub{font-size:10px;color:#444;letter-spacing:2px;text-transform:uppercase}
+.tb-btns{display:flex;gap:8px}
+.tbtn{background:#1e1e1e;color:#888;border-radius:8px;padding:7px 11px;font-size:12px;font-weight:700}
+
+/* ── SESSION BAR ── */
+.session-bar{background:#161616;border-radius:12px;padding:10px 14px;margin-bottom:12px;display:flex;justify-content:space-between;align-items:center}
+.sb-left{display:flex;flex-direction:column;gap:2px}
+.sb-week{font-size:13px;font-weight:800}
+.sb-date{font-size:11px;color:#555}
+.sb-right{display:flex;gap:8px;align-items:center}
+.sb-badge{background:#1e1e1e;border-radius:8px;padding:5px 10px;font-size:12px;font-weight:800;color:#888}
+.sb-start{border-radius:10px;padding:8px 16px;font-size:13px;font-weight:800}
+
+/* ── TABS ── */
+.tabs{display:flex;gap:4px;overflow-x:auto;scrollbar-width:none}
+.tabs::-webkit-scrollbar{display:none}
+.tab{flex:0 0 auto;border-radius:8px 8px 0 0;padding:9px 14px;font-size:11px;font-weight:800;letter-spacing:.5px;text-transform:uppercase;color:#555;background:#1a1a1a;transition:all .2s}
+.tab.active{color:#000}
+
+/* ── DAY HEADER ── */
+.day-hdr{padding:14px 16px 10px;border-bottom:1px solid #1a1a1a}
+.dh-row{display:flex;justify-content:space-between;align-items:flex-start}
+.day-name{font-size:26px;font-weight:900;letter-spacing:-.5px}
+.day-sub{font-size:12px;color:#555;margin-top:2px}
+.day-pct{font-size:22px;font-weight:900;text-align:right}
+.day-setlbl{font-size:11px;color:#444}
+.prog-bar{margin-top:10px;background:#1a1a1a;border-radius:4px;height:5px}
+.prog-fill{height:100%;border-radius:4px;transition:width .35s}
+
+/* ── CONTENT ── */
+.content{padding:12px 16px}
+
+/* ── BANNER ── */
+.banner{border-radius:12px;padding:11px 14px;margin-bottom:12px;border:1px solid}
+.ban-lbl{font-size:10px;font-weight:800;letter-spacing:1px;text-transform:uppercase;margin-bottom:3px}
+.ban-txt{font-size:12px;color:#666;line-height:1.6}
+
+/* ── EXERCISE CARD ── */
+.excard{border-radius:16px;margin-bottom:10px;overflow:hidden;border:1px solid #1e1e1e;background:#141414;transition:all .2s}
+.excard.is-done{background:#0c160c}
+
+/* Card top row — name + tag + count */
+.ex-top{display:flex;justify-content:space-between;align-items:flex-start;padding:14px 14px 0}
+.ex-left{flex:1}
+.tag{font-size:9px;font-weight:900;padding:2px 8px;border-radius:20px;letter-spacing:1px;text-transform:uppercase;display:inline-block;margin-bottom:5px}
+.tag-acc{background:#222;color:#555}
+.ex-name{font-size:17px;font-weight:800;line-height:1.2}
+.ex-meta{font-size:11px;color:#555;margin-top:2px}
+.ex-right{text-align:right;padding-left:10px}
+.ex-count{font-size:14px;font-weight:800}
+.ex-chev{font-size:12px;color:#333;margin-top:6px}
+
+/* LAST / TODAY weights — always visible */
+.weight-row{display:flex;gap:8px;padding:10px 14px 0;align-items:stretch}
+.wbox{flex:1;background:#0d0d0d;border-radius:10px;padding:8px 10px;border:1px solid #1e1e1e}
+.wbox-lbl{font-size:9px;color:#444;text-transform:uppercase;letter-spacing:1.5px;font-weight:800;margin-bottom:3px}
+.wbox-val{font-size:15px;font-weight:800}
+.wbox-val.go{color:#e8a838}
+
+/* Alternate pill — always visible */
+.alt-pill{margin:8px 14px 0;background:#1a1a1a;border-radius:10px;padding:8px 12px;display:flex;align-items:center;gap:8px}
+.alt-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+.alt-text{font-size:12px;font-weight:700}
+.alt-sub{font-size:11px;color:#555;margin-top:1px}
+
+/* SET BUBBLES */
+.bubbles{display:flex;gap:8px;padding:10px 14px;flex-wrap:wrap}
+.bubble{width:46px;height:46px;border-radius:50%;border:2px solid #2a2a2a;background:#1a1a1a;color:#555;font-weight:800;font-size:12px;display:flex;align-items:center;justify-content:center;transition:all .15s;-webkit-tap-highlight-color:transparent}
+
+/* QUICK LOG — always visible */
+.quick-log{padding:0 14px 14px;display:flex;gap:8px;align-items:center}
+.qinput{background:#1a1a1a;border:1px solid #252525;border-radius:10px;color:#fff;padding:10px 12px;font-size:15px;flex:1;min-width:0}
+.qinput::placeholder{color:#444;font-size:13px}
+.qinput-sm{flex:none;width:90px}
+.qsave{border-radius:10px;padding:10px 16px;font-weight:800;font-size:13px;white-space:nowrap}
+
+/* EXPAND SECTION */
+.ex-detail{padding:0 14px 14px;border-top:1px solid #1a1a1a;display:none}
+.ex-detail.open{display:block}
+.detail-toggle{width:100%;padding:10px 14px;background:none;color:#444;font-size:12px;text-align:center;border-top:1px solid #1a1a1a;display:flex;align-items:center;justify-content:center;gap:6px}
+.ibox{background:#0d0d0d;border-radius:10px;padding:10px 12px;border:1px solid #1e1e1e;margin-top:8px}
+.ilbl{font-size:9px;color:#444;text-transform:uppercase;letter-spacing:1.5px;font-weight:800;margin-bottom:5px}
+.itext{font-size:12px;color:#777;line-height:1.6}
+.hrow{display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid #1a1a1a}
+.hrow:last-child{border-bottom:none}
+.hdate{font-size:11px;color:#444}
+.hweight{font-size:13px;font-weight:700;color:#777}
+
+/* DONE BANNER */
+.done-banner{border-radius:14px;padding:22px;text-align:center;margin-top:4px}
+
+/* REST DAY */
+.rcard{background:#141414;border-radius:14px;padding:14px;margin-bottom:10px;border:1px solid #1e1e1e;display:flex;gap:14px;align-items:flex-start}
+
+/* START SESSION OVERLAY */
+.overlay{position:fixed;inset:0;background:rgba(0,0,0,.85);z-index:500;display:flex;align-items:flex-end;justify-content:center;padding-bottom:env(safe-area-inset-bottom,20px)}
+.overlay.hidden{display:none}
+.sheet{background:#161616;border-radius:24px 24px 0 0;padding:24px 20px 30px;width:100%;max-width:480px;border-top:1px solid #2a2a2a}
+.sheet-title{font-size:22px;font-weight:900;margin-bottom:4px}
+.sheet-sub{font-size:13px;color:#555;margin-bottom:20px}
+.sheet-row{display:flex;justify-content:space-between;align-items:center;padding:14px 0;border-bottom:1px solid #1e1e1e}
+.sheet-row:last-of-type{border-bottom:none}
+.sheet-label{font-size:15px;font-weight:700}
+.sheet-val{font-size:15px;font-weight:800;color:#888}
+.sheet-counter{display:flex;align-items:center;gap:16px}
+.scbtn{background:#2a2a2a;border-radius:50%;width:34px;height:34px;display:flex;align-items:center;justify-content:center;font-size:20px;color:#fff;font-weight:300;line-height:1}
+.sheet-confirm{width:100%;border-radius:14px;padding:16px;font-size:17px;font-weight:800;margin-top:20px}
+
+/* BACK BAR */
+.back-bar{background:#111;padding:14px 16px;display:flex;justify-content:space-between;align-items:center;border-bottom:1px solid #1e1e1e;position:sticky;top:0;z-index:100}
+.back-btn{background:none;color:#888;font-size:14px;font-weight:700}
+.back-title{font-size:17px;font-weight:900}
+
+/* PLATEAU */
+.step-card{background:#141414;border-radius:14px;padding:14px;margin-bottom:10px;border-left:3px solid #e8a838;border-top:1px solid #1e1e1e;border-right:1px solid #1e1e1e;border-bottom:1px solid #1e1e1e;display:flex;gap:12px}
+.step-badge{background:#e8a838;color:#000;width:28px;height:28px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:900;font-size:13px;flex-shrink:0;margin-top:1px}
+.step-title{font-weight:800;font-size:15px;margin-bottom:5px}
+.step-desc{font-size:13px;color:#666;line-height:1.6}
+</style>
+</head>
+<body>
+
+<!-- ══════════════════════════════════
+     START SESSION OVERLAY
+══════════════════════════════════ -->
+<div class="overlay hidden" id="overlay">
+  <div class="sheet">
+    <div class="sheet-title">New Session 💪</div>
+    <div class="sheet-sub" id="sheet-sub">Let's get to work.</div>
+    <div class="sheet-row">
+      <div class="sheet-label">Week</div>
+      <div class="sheet-counter">
+        <button class="scbtn" onclick="adjSheet('week',-1)">−</button>
+        <span class="sheet-val" id="sheet-week">1</span>
+        <button class="scbtn" onclick="adjSheet('week',1)">+</button>
+      </div>
+    </div>
+    <div class="sheet-row">
+      <div class="sheet-label">Session</div>
+      <div class="sheet-counter">
+        <button class="scbtn" onclick="adjSheet('session',-1)">−</button>
+        <span class="sheet-val" id="sheet-session">1</span>
+        <button class="scbtn" onclick="adjSheet('session',1)">+</button>
+      </div>
+    </div>
+    <div class="sheet-row">
+      <div class="sheet-label">Day</div>
+      <div id="sheet-day-picker" style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end"></div>
+    </div>
+    <button class="sheet-confirm" id="sheet-confirm" onclick="confirmSession()">Start Session →</button>
+  </div>
+</div>
+
+<!-- ══════════════════════════════════
+     TRACKER VIEW
+══════════════════════════════════ -->
+<div id="view-tracker" class="view active">
+  <div class="topbar">
+    <div class="tb-row">
+      <div>
+        <div class="app-sub">CBum Method</div>
+        <div class="app-title">Workout Tracker</div>
+      </div>
+      <div class="tb-btns">
+        <button class="tbtn" onclick="showView('history')">📊 Log</button>
+        <button class="tbtn" onclick="showView('plateau')">📈 Plateau</button>
+      </div>
+    </div>
+    <!-- Session bar -->
+    <div class="session-bar" id="session-bar">
+      <div class="sb-left">
+        <div class="sb-week" id="sb-week-label">No active session</div>
+        <div class="sb-date" id="sb-date-label">Tap to start</div>
+      </div>
+      <div class="sb-right">
+        <div class="sb-badge" id="sb-day-badge">–</div>
+        <button class="sb-start" id="sb-start-btn" onclick="openOverlay()" style="background:#e8a838;color:#000">Start</button>
+      </div>
+    </div>
+    <div class="tabs" id="day-tabs"></div>
+  </div>
+  <div id="day-header" class="day-hdr"></div>
+  <div class="content" id="ex-list"></div>
+</div>
+
+<!-- ══════════════════════════════════
+     HISTORY VIEW
+══════════════════════════════════ -->
+<div id="view-history" class="view">
+  <div class="back-bar">
+    <button class="back-btn" onclick="showView('tracker')">← Back</button>
+    <div class="back-title">Weight History</div>
+    <div></div>
+  </div>
+  <div class="content" id="history-content"></div>
+</div>
+
+<!-- ══════════════════════════════════
+     PLATEAU VIEW
+══════════════════════════════════ -->
+<div id="view-plateau" class="view">
+  <div class="back-bar">
+    <button class="back-btn" onclick="showView('tracker')">← Back</button>
+    <div class="back-title">Plateau Protocol</div>
+    <div></div>
+  </div>
+  <div class="content">
+    <div class="banner" style="background:#0d0d0d;border-color:#2a2a2a">
+      <div class="ban-txt">Grinding the same failed weight over and over isn't a plan. Here's the actual system.</div>
+    </div>
+    <div class="step-card"><div class="step-badge">1</div><div><div class="step-title">Check Your Life First</div><div class="step-desc">Bad sleep, diet slipping, weed, drinking? Fix those before touching the program. Seriously.</div></div></div>
+    <div class="step-card"><div class="step-badge">2</div><div><div class="step-title">Drop Reps, Keep Weight</div><div class="step-desc">Instead of 3×5 do 3×3 with the same weight. Own it. Next session go back to full reps.</div></div></div>
+    <div class="step-card"><div class="step-badge">3</div><div><div class="step-title">Deload Week — Every 4th Week</div><div class="step-desc">Drop to 60% of working weight. Same reps, same exercises. Come back week 5 and you'll break through.</div></div></div>
+    <div class="step-card"><div class="step-badge">4</div><div><div class="step-title">Strip 10% and Rebuild</div><div class="step-desc">Stuck 3+ sessions after all of the above? Drop 10%, rebuild with perfect form. You'll fly past your old max.</div></div></div>
+    <div class="step-card"><div class="step-badge">5</div><div><div class="step-title">Wave Loading</div><div class="step-desc">Add a set instead of weight. 3×5 → 4×5 → 5×5, then add weight and drop back to 3×5. Real long-term progression.</div></div></div>
+    <div class="banner" style="background:#0f1a0f;border-color:#5ec46a40;margin-top:4px">
+      <div class="ban-lbl" style="color:#5ec46a">📅 Deload Schedule</div>
+      <div class="ban-txt">Weeks 1–3: Push hard.<br>Week 4: DELOAD — 60% weight, same reps.<br>Week 5: Come back and break records.<br><br><span style="color:#5ec46a">Non-negotiable. This IS the system.</span></div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ══════════════════════════════════
+// PROGRAM DATA
+// ══════════════════════════════════
+const DAYS = [
+  {
+    id:'push', label:'PUSH', sub:'Chest · Shoulders · Triceps', color:'#e8a838',
+    exercises:[
+      {id:'ohp', name:'OHP', tag:'MAIN', isMain:true,
+       alternates:['Barbell OHP','Dumbbell OHP'],
+       sets:3, repRange:'3–5', startWeight:125, unit:'lb',
+       progression:'Double progression: hit the TOP of rep range 2 sessions in a row → add 5 lb. Missing reps 2 sessions straight → hit the Plateau tab.'},
+      {id:'db_bench', name:'Flat / Incline DB Bench', tag:'MAIN', isMain:true,
+       alternates:['Flat DB Bench','Incline DB Bench'],
+       sets:4, repRange:'8–12', startWeight:65, unit:'lb DB',
+       progression:'Hit 4×12 two sessions in a row → add 5 lb and target 4×8 again. 1 sec pause at bottom, full stretch.'},
+      {id:'dips', name:'Plate Loaded Dips', tag:'ACCESSORY', isMain:false,
+       sets:3, repRange:'10–12', startWeight:35, unit:'lb plate',
+       progression:'Hit 3×12 → add 5 lb next session.'},
+      {id:'laterals', name:'Lateral Raises', tag:'ACCESSORY', isMain:false,
+       sets:4, repRange:'12–15', startWeight:20, unit:'lb DB',
+       progression:'Hit 4×15 → add 2.5 lb. Strict form, no swinging.'},
+      {id:'rear_delt', name:'Rear Delt Flyes', tag:'ACCESSORY', isMain:false,
+       sets:3, repRange:'15', startWeight:25, unit:'lb DB',
+       progression:'Add 2.5 lb every 2–3 weeks.'},
+      {id:'triceps', name:'Tricep Pushdowns', tag:'ACCESSORY', isMain:false,
+       sets:3, repRange:'12', startWeight:50, unit:'lb cable',
+       progression:'Add 5 lb every 2 weeks.'},
+    ]
+  },
+  {
+    id:'pull', label:'PULL', sub:'Back · Biceps · Rear Delts', color:'#4f9ef5',
+    exercises:[
+      {id:'pullups', name:'Weighted Pull Ups', tag:'MAIN', isMain:true,
+       alternates:['Weighted Pull Ups','Barbell Row'],
+       sets:3, repRange:'4–6', startWeight:35, unit:'lb belt',
+       progression:'Hit top of rep range 2 sessions → add 2.5–5 lb. Full dead hang every rep, no kipping.'},
+      {id:'lat_pull', name:'Lat Pulldown / Single Arm', tag:'MAIN', isMain:true,
+       alternates:['Lat Pulldown','Single Arm Cable Pulldown'],
+       sets:4, repRange:'8–12', startWeight:160, unit:'lb',
+       progression:'Hit 4×12 → add 10 lb. Pull to upper chest, full stretch at top.'},
+      {id:'cable_row', name:'Horizontal Cable Row', tag:'ACCESSORY', isMain:false,
+       sets:3, repRange:'10', startWeight:140, unit:'lb',
+       progression:'Add 10 lb every 2 weeks. Hard squeeze at peak contraction.'},
+      {id:'face_pull', name:'Face Pulls', tag:'ACCESSORY', isMain:false,
+       sets:3, repRange:'15', startWeight:50, unit:'lb cable',
+       progression:'Add 5 lb every 2–3 weeks. Non-negotiable for shoulder health.'},
+      {id:'curls', name:'Barbell Curls', tag:'ACCESSORY', isMain:false,
+       sets:3, repRange:'8–10', startWeight:45, unit:'lb bar',
+       progression:'Hit 3×10 → add 5 lb.'},
+    ]
+  },
+  {
+    id:'legs', label:'LEGS', sub:'Quads · Hamstrings · Glutes · Calves', color:'#5ec46a',
+    exercises:[
+      {id:'hack_squat', name:'Hack Squat', tag:'MAIN · QUADS', isMain:true,
+       sets:4, repRange:'8–10', startWeight:150, unit:'lb',
+       progression:'Hit 4×10 two sessions → add 10 lb, target 4×8. Slow descent, full depth every rep.'},
+      {id:'rdl', name:'Romanian Deadlift', tag:'MAIN · HAMSTRINGS', isMain:true,
+       sets:3, repRange:'8–10', startWeight:205, unit:'lb',
+       progression:'Hit 3×10 → add 10 lb. Feel the hamstring stretch every rep. Not a back exercise.'},
+      {id:'leg_press', name:'Leg Press', tag:'ACCESSORY · QUADS/GLUTES', isMain:false,
+       sets:3, repRange:'10', startWeight:360, unit:'lb',
+       progression:'Add 20 lb every 2 weeks. High foot placement = more glute/ham.'},
+      {id:'single_leg', name:'Single Leg Press', tag:'ACCESSORY · BALANCE', isMain:false,
+       sets:3, repRange:'10 each', startWeight:100, unit:'lb',
+       progression:'Add 10 lb every 2 weeks. Fix imbalances between legs.'},
+      {id:'leg_curl', name:'Leg Curl Machine', tag:'ACCESSORY · HAMSTRINGS', isMain:false,
+       sets:3, repRange:'12', startWeight:90, unit:'lb',
+       progression:'Add 5 lb every 2 weeks. Slow eccentric, don\'t let it snap back.'},
+      {id:'calves', name:'Standing Calf Raise', tag:'ACCESSORY · CALVES', isMain:false,
+       sets:4, repRange:'12', startWeight:360, unit:'lb',
+       progression:'Add 20 lb every 2–3 weeks. Full stretch at bottom every rep.'},
+    ]
+  },
+  {id:'rest', label:'REST', sub:'Recovery · Mobility · Walk', color:'#9b8ea8', isRest:true, exercises:[]}
+];
+
+const REST_ITEMS = [
+  {icon:'🚶', t:'Evening Walk', d:'20–30 mins, no phone. Let your brain decompress naturally.'},
+  {icon:'🧘', t:'Mobility Work', d:'Hip flexors, thoracic spine, hamstrings. 15 mins.'},
+  {icon:'😴', t:'Sleep by 10:30–11pm', d:'This is where you actually grow bro.'},
+  {icon:'🥩', t:'Hit 165g Protein', d:'Rest days count for nutrition too. Don\'t slip.'},
+  {icon:'🧠', t:'No Weed', d:'Let your dopamine reset. This is part of the program.'},
+];
+
+// ══════════════════════════════════
+// STATE & STORAGE
+// ══════════════════════════════════
+const KEY = 'cbum_v4';
+let S = {
+  week: 1, session: 1, dayIdx: 0,
+  sessionActive: false, sessionDate: null,
+  completedSets: {}, expandedEx: null,
+};
+let DB = {}; // { exId: [{week,session,day,weight,reps,date,altIdx}] }
+
+function loadDB(){
+  try{
+    const raw = localStorage.getItem(KEY);
+    if(raw){ const p = JSON.parse(raw); S = p.S||S; DB = p.DB||{}; }
+  } catch{}
+}
+function saveDB(){
+  try{ localStorage.setItem(KEY, JSON.stringify({S,DB})); } catch{}
+}
+
+// ══════════════════════════════════
+// HELPERS
+// ══════════════════════════════════
+function getDay(){ return DAYS[S.dayIdx]; }
+function getHist(id){ return DB[id]||[]; }
+function getLast(id){ const h=getHist(id); return h.length?h[h.length-1]:null; }
+
+// Which alternate to use this session (flips from last)
+function getAltIdx(ex){
+  if(!ex.alternates) return null;
+  const h = getHist(ex.id);
+  if(!h.length) return 0;
+  const lastAlt = h[h.length-1].altIdx;
+  return lastAlt === 0 ? 1 : 0;
+}
+
+function getSug(ex){
+  const h = getHist(ex.id);
+  if(!h.length) return {txt:`Start: ${ex.startWeight} ${ex.unit}`, go:false};
+  const last = h[h.length-1];
+  const topRep = parseInt((ex.repRange.split('–')[1]||ex.repRange).replace(/\D/g,''));
+  if(h.length >= 2){
+    const prev = h[h.length-2];
+    if(last.weight===prev.weight && last.reps>=topRep && prev.reps>=topRep){
+      const inc = (ex.id==='laterals'||ex.id==='rear_delt') ? 2.5 : (ex.isMain?5:5);
+      return {txt:`📈 Go up → ${last.weight+inc} ${ex.unit}`, go:true};
+    }
+  }
+  return {txt:`${last.weight} ${ex.unit}`, go:false};
+}
+
+function totalSets(){
+  const d=getDay(); if(d.isRest) return 0;
+  return d.exercises.reduce((a,e)=>a+e.sets,0);
+}
+function doneSets(){
+  const d=getDay(); if(d.isRest) return 0;
+  return d.exercises.reduce((a,e)=>{
+    for(let i=0;i<e.sets;i++) if(S.completedSets[`${e.id}-${i}`]) a++;
+    return a;
+  },0);
+}
+
+function today(){
+  return new Date().toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'});
+}
+
+// ══════════════════════════════════
+// VIEW SWITCHING
+// ══════════════════════════════════
+function showView(name){
+  document.querySelectorAll('.view').forEach(v=>v.classList.remove('active'));
+  document.getElementById('view-'+name).classList.add('active');
+  if(name==='history') renderHistory();
+  window.scrollTo(0,0);
+}
+
+// ══════════════════════════════════
+// SESSION OVERLAY
+// ══════════════════════════════════
+let sheetState = {week:1, session:1, dayIdx:0};
+
+function openOverlay(){
+  // Pre-fill smart defaults
+  sheetState.week = S.week;
+  sheetState.session = S.sessionActive ? S.session + 1 : S.session;
+  sheetState.dayIdx = S.dayIdx;
+  syncSheet();
+  document.getElementById('overlay').classList.remove('hidden');
+  document.getElementById('sheet-sub').textContent = today();
+}
+
+function syncSheet(){
+  document.getElementById('sheet-week').textContent = sheetState.week;
+  document.getElementById('sheet-session').textContent = sheetState.session;
+  // Day picker
+  const dp = document.getElementById('sheet-day-picker');
+  dp.innerHTML = DAYS.map((d,i)=>`
+    <button onclick="sheetState.dayIdx=${i};syncSheet()"
+      style="border-radius:8px;padding:6px 10px;font-size:11px;font-weight:800;
+             background:${sheetState.dayIdx===i?d.color:'#2a2a2a'};
+             color:${sheetState.dayIdx===i?'#000':'#888'};border:none;cursor:pointer">
+      ${d.isRest?'😴':d.label}
+    </button>`).join('');
+  // Confirm button color
+  const day = DAYS[sheetState.dayIdx];
+  const btn = document.getElementById('sheet-confirm');
+  btn.style.background = day.color;
+  btn.style.color = '#000';
+}
+
+function adjSheet(field, d){
+  if(field==='week') sheetState.week = Math.max(1, sheetState.week+d);
+  if(field==='session') sheetState.session = Math.max(1, sheetState.session+d);
+  syncSheet();
+}
+
+function confirmSession(){
+  S.week = sheetState.week;
+  S.session = sheetState.session;
+  S.dayIdx = sheetState.dayIdx;
+  S.sessionActive = true;
+  S.sessionDate = today();
+  S.completedSets = {};
+  S.expandedEx = null;
+  document.getElementById('overlay').classList.add('hidden');
+  saveDB();
+  render();
+}
+
+// ══════════════════════════════════
+// LOG WEIGHT
+// ══════════════════════════════════
+function logWeight(exId){
+  const wEl = document.getElementById('w-'+exId);
+  const rEl = document.getElementById('r-'+exId);
+  const w = parseFloat(wEl.value);
+  const r = parseInt(rEl.value);
+  if(!w||isNaN(w)){ wEl.style.borderColor='#e8383840'; setTimeout(()=>wEl.style.borderColor='#252525',1000); return; }
+  const day = getDay();
+  const ex = day.exercises.find(e=>e.id===exId);
+  const altIdx = ex.alternates ? getAltIdx(ex) : null;
+  if(!DB[exId]) DB[exId]=[];
+  DB[exId].push({
+    week:S.week, session:S.session, day:day.id,
+    weight:w, reps:isNaN(r)?null:r, altIdx,
+    date:new Date().toLocaleDateString('en-US',{month:'short',day:'numeric'}),
+  });
+  saveDB();
+  wEl.value=''; rEl.value='';
+  render();
+}
+
+function toggleSet(exId, i){
+  const k=`${exId}-${i}`;
+  S.completedSets[k]=!S.completedSets[k];
+  saveDB();
+  render();
+}
+
+function toggleExpand(exId){
+  S.expandedEx = S.expandedEx===exId?null:exId;
+  render();
+}
+
+function selectDay(i){
+  S.dayIdx=i; S.completedSets={}; S.expandedEx=null;
+  saveDB(); render();
+}
+
+// ══════════════════════════════════
+// RENDER
+// ══════════════════════════════════
+function render(){
+  renderSessionBar();
+  renderTabs();
+  renderDayHeader();
+  renderExercises();
+}
+
+function renderSessionBar(){
+  const active = S.sessionActive;
+  const day = getDay();
+  document.getElementById('sb-week-label').textContent = active
+    ? `Week ${S.week} · Session ${S.session}`
+    : 'No active session';
+  document.getElementById('sb-date-label').textContent = active
+    ? S.sessionDate || today()
+    : 'Tap Start to begin';
+  document.getElementById('sb-day-badge').textContent = active
+    ? day.label
+    : '–';
+  document.getElementById('sb-day-badge').style.color = active ? day.color : '#444';
+  const btn = document.getElementById('sb-start-btn');
+  btn.textContent = active ? 'New' : 'Start';
+  btn.style.background = active ? '#2a2a2a' : '#e8a838';
+  btn.style.color = active ? '#888' : '#000';
+}
+
+function renderTabs(){
+  document.getElementById('day-tabs').innerHTML = DAYS.map((d,i)=>`
+    <button class="tab ${i===S.dayIdx?'active':''}"
+      style="${i===S.dayIdx?`background:${d.color};`:''}"
+      onclick="selectDay(${i})">
+      ${d.isRest?'😴':`D${i+1}`} ${d.label}
+    </button>`).join('');
+}
+
+function renderDayHeader(){
+  const day=getDay();
+  const tot=totalSets(), done=doneSets();
+  const pct = tot?Math.round(done/tot*100):0;
+  const el = document.getElementById('day-header');
+  if(day.isRest){
+    el.innerHTML=`<div class="dh-row">
+      <div><div class="day-name" style="color:${day.color}">Rest Day 🔋</div>
+      <div class="day-sub">${day.sub}</div></div></div>`;
+    return;
+  }
+  el.innerHTML=`<div class="dh-row">
+    <div><div class="day-name" style="color:${day.color}">${day.label}</div>
+    <div class="day-sub">${day.sub}</div></div>
+    <div><div class="day-pct" style="color:${day.color}">${pct}%</div>
+    <div class="day-setlbl">${done}/${tot} sets</div></div>
+  </div>
+  <div class="prog-bar"><div class="prog-fill" style="width:${pct}%;background:${day.color}"></div></div>`;
+}
+
+function renderExercises(){
+  const day=getDay();
+  const list=document.getElementById('ex-list');
+
+  if(day.isRest){
+    list.innerHTML = REST_ITEMS.map(r=>`
+      <div class="rcard">
+        <div style="font-size:26px;flex-shrink:0">${r.icon}</div>
+        <div><div style="font-weight:700;font-size:14px">${r.t}</div>
+        <div style="font-size:12px;color:#666;margin-top:3px">${r.d}</div></div>
+      </div>`).join('') +
+      `<div class="banner" style="background:#0f1209;border-color:#e8a83840">
+        <div class="ban-lbl" style="color:#e8a838">🔄 Rotation</div>
+        <div class="ban-txt">Push → Pull → Legs → REST → Repeat. Doesn't follow the calendar.</div>
+      </div>`;
+    return;
+  }
+
+  if(!S.sessionActive){
+    list.innerHTML=`<div style="text-align:center;padding:50px 20px">
+      <div style="font-size:40px;margin-bottom:16px">👆</div>
+      <div style="font-size:18px;font-weight:800;margin-bottom:8px">Start a session first</div>
+      <div style="font-size:14px;color:#555">Tap the Start button above to begin tracking your workout.</div>
+    </div>`;
+    return;
+  }
+
+  const tot=totalSets(), done=doneSets();
+  let html = `<div class="banner" style="background:#0a120a;border-color:${day.color}30">
+    <div class="ban-lbl" style="color:${day.color}">Double Progression</div>
+    <div class="ban-txt">Hit TOP of rep range 2 sessions in a row → add weight next session. Not there yet → stay put.</div>
+  </div>`;
+
+  day.exercises.forEach(ex=>{
+    const ds = Array.from({length:ex.sets},(_,i)=>S.completedSets[`${ex.id}-${i}`]?1:0).reduce((a,b)=>a+b,0);
+    const isDone = ds===ex.sets;
+    const isOpen = S.expandedEx===ex.id;
+    const sug = getSug(ex);
+    const last = getLast(ex.id);
+    const altIdx = ex.alternates ? getAltIdx(ex) : null;
+    const altName = altIdx!==null ? ex.alternates[altIdx] : null;
+    const lastAltName = (altIdx!==null && last) ? ex.alternates[last.altIdx===0?0:1] : null;
+    const hist = getHist(ex.id).slice(-4).reverse();
+
+    // Bubbles
+    const bubbles = Array.from({length:ex.sets},(_,i)=>{
+      const d = S.completedSets[`${ex.id}-${i}`];
+      return `<button class="bubble" onclick="toggleSet('${ex.id}',${i})"
+        style="${d?`background:${day.color};border-color:${day.color};color:#000`:''}">
+        ${d?'✓':`S${i+1}`}</button>`;
+    }).join('');
+
+    // History rows
+    const histRows = hist.length
+      ? hist.map(h=>`<div class="hrow">
+          <span class="hdate">W${h.week}·S${h.session} ${h.date}${h.altIdx!==undefined&&ex.alternates?' · '+ex.alternates[h.altIdx]:''}</span>
+          <span class="hweight">${h.weight} ${ex.unit}${h.reps?` × ${h.reps}`:''}</span>
+        </div>`).join('')
+      : `<div style="font-size:12px;color:#444;padding:6px 0">No sessions logged yet</div>`;
+
+    html += `
+    <div class="excard ${isDone?'is-done':''}" style="border-color:${isDone?day.color+'60':ex.isMain?day.color+'20':'#1e1e1e'}">
+
+      <!-- TOP ROW -->
+      <div class="ex-top">
+        <div class="ex-left">
+          <span class="tag ${ex.isMain?'':'tag-acc'}" style="${ex.isMain?`background:${day.color};color:#000`:''}">
+            ${ex.tag}
+          </span>
+          <div class="ex-name">${ex.name}</div>
+          <div class="ex-meta">${ex.sets} sets × ${ex.repRange} reps</div>
+        </div>
+        <div class="ex-right">
+          <div class="ex-count" style="color:${day.color}">${ds}/${ex.sets}</div>
+          ${isDone?'<div style="font-size:16px;margin-top:4px">✅</div>':''}
+        </div>
+      </div>
+
+      <!-- LAST / TODAY WEIGHTS — always visible -->
+      <div class="weight-row">
+        <div class="wbox">
+          <div class="wbox-lbl">Last session</div>
+          <div class="wbox-val" style="color:#666">${last?`${last.weight} ${ex.unit}`:'–'}</div>
+        </div>
+        <div class="wbox" style="${sug.go?`border-color:${day.color}40;background:${day.color}10`:''}">
+          <div class="wbox-lbl" style="${sug.go?`color:${day.color}`:''}">Today's target</div>
+          <div class="wbox-val ${sug.go?'go':''}" style="${sug.go?`color:${day.color}`:'color:#ccc'}">${sug.txt}</div>
+        </div>
+      </div>
+
+      <!-- ALTERNATE PILL — only for main exercises with alternates -->
+      ${altName?`
+      <div class="alt-pill">
+        <div class="alt-dot" style="background:${day.color}"></div>
+        <div>
+          <div class="alt-text">${altName}</div>
+          ${lastAltName?`<div class="alt-sub">Last session: ${lastAltName}</div>`:'<div class="alt-sub">First session — start here</div>'}
+        </div>
+      </div>`:''}
+
+      <!-- SET BUBBLES -->
+      <div class="bubbles">${bubbles}</div>
+
+      <!-- QUICK LOG — always visible -->
+      <div class="quick-log">
+        <input class="qinput" type="number" id="w-${ex.id}" placeholder="Weight (${ex.unit})">
+        <input class="qinput qinput-sm" type="number" id="r-${ex.id}" placeholder="Reps">
+        <button class="qsave" style="background:${day.color};color:#000" onclick="logWeight('${ex.id}')">Log ✓</button>
+      </div>
+
+      <!-- DETAIL TOGGLE -->
+      <button class="detail-toggle" onclick="toggleExpand('${ex.id}')">
+        <span style="color:#444;font-size:13px">${isOpen?'▲':'▼'}</span>
+        <span style="font-size:12px;color:#444">${isOpen?'Hide details':'Progression & history'}</span>
+      </button>
+
+      <!-- EXPANDABLE DETAIL -->
+      <div class="ex-detail ${isOpen?'open':''}">
+        <div class="ibox">
+          <div class="ilbl">Progression Rule</div>
+          <div class="itext">${ex.progression}</div>
+        </div>
+        <div class="ibox" style="margin-top:8px">
+          <div class="ilbl">Session History</div>
+          ${histRows}
+        </div>
+      </div>
+
+    </div>`;
+  });
+
+  // Done banner
+  if(done===tot&&tot>0){
+    html+=`<div class="done-banner" style="background:${day.color}">
+      <div style="font-size:34px">💪</div>
+      <div style="font-size:20px;font-weight:900;color:#000;margin-top:8px">Session Done.</div>
+      <div style="font-size:13px;color:rgba(0,0,0,.7);margin-top:4px">All weights logged. See you next session.</div>
+    </div>`;
+  }
+
+  list.innerHTML = html;
+}
+
+// ══════════════════════════════════
+// HISTORY VIEW
+// ══════════════════════════════════
+function renderHistory(){
+  const el = document.getElementById('history-content');
+  let html=''; let any=false;
+  DAYS.filter(d=>!d.isRest).forEach(day=>{
+    day.exercises.forEach(ex=>{
+      const hist=getHist(ex.id);
+      if(!hist.length) return;
+      any=true;
+      const sug=getSug(ex);
+      html+=`<div style="background:#141414;border-radius:14px;padding:14px;margin-bottom:10px;border:1px solid #1e1e1e">
+        <div style="font-weight:800;font-size:15px;color:${day.color}">${ex.name}</div>
+        <div style="font-size:11px;color:#555;margin-bottom:8px">${day.label} · ${ex.sets}×${ex.repRange}</div>
+        ${hist.slice().reverse().map(h=>`
+          <div class="hrow">
+            <span class="hdate">W${h.week}·S${h.session} ${h.date}${h.altIdx!==undefined&&ex.alternates?' · '+ex.alternates[h.altIdx]:''}</span>
+            <span class="hweight">${h.weight} ${ex.unit}${h.reps?` × ${h.reps} reps`:''}</span>
+          </div>`).join('')}
+        <div style="font-size:12px;margin-top:8px;font-style:italic;color:${sug.go?day.color:'#555'}">${sug.txt}</div>
+      </div>`;
+    });
+  });
+  if(!any) html='<div style="color:#555;text-align:center;padding:50px 20px;font-size:14px">No sessions logged yet.<br>Start a session and it\'ll show up here.</div>';
+  el.innerHTML=html;
+}
+
+// ══════════════════════════════════
+// INIT
+// ══════════════════════════════════
+loadDB();
+render();
+</script>
+</body>
+</html>
