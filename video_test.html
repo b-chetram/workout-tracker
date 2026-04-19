@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>Video Embed Test</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#0d0d0d;color:#fff;font-family:-apple-system,sans-serif;padding:20px}
+h1{font-size:20px;margin-bottom:4px}
+h2{font-size:15px;margin:16px 0 8px;color:#e8a838}
+p{font-size:13px;color:#999;margin-bottom:12px}
+.divider{border:none;border-top:1px solid #333;margin:24px 0}
+.tag{display:inline-block;padding:3px 8px;border-radius:6px;font-size:11px;font-weight:600;margin-bottom:8px;background:#1a3a1a;color:#4ade80}
+
+/* Style A: Full width card with dark overlay */
+.vid-card{
+  width:100%;
+  max-width:340px;
+  margin:0 auto 20px;
+  border-radius:16px;
+  overflow:hidden;
+  position:relative;
+  background:#111;
+}
+.vid-card video{
+  width:100%;
+  display:block;
+}
+.vid-card .overlay{
+  position:absolute;
+  bottom:0;left:0;right:0;
+  padding:14px;
+  background:linear-gradient(transparent,rgba(0,0,0,0.85));
+}
+.vid-card .overlay .title{font-size:14px;font-weight:700;color:#fff}
+.vid-card .overlay .sub{font-size:11px;color:#aaa;margin-top:2px}
+
+/* Style B: Compact horizontal scroll strip */
+.strip{
+  display:flex;
+  gap:10px;
+  overflow-x:auto;
+  padding:8px 0;
+  scrollbar-width:none;
+}
+.strip::-webkit-scrollbar{display:none}
+.strip-item{
+  flex:0 0 160px;
+  border-radius:12px;
+  overflow:hidden;
+  background:#1a1a1a;
+  border:1px solid #2a2a2a;
+}
+.strip-item video{
+  width:160px;
+  height:220px;
+  object-fit:cover;
+  display:block;
+}
+.strip-item .strip-label{
+  padding:6px 8px;
+  font-size:11px;
+  color:#ccc;
+  text-align:center;
+}
+
+/* Style C: Hero banner with text overlay */
+.hero{
+  width:100%;
+  max-width:340px;
+  margin:0 auto 20px;
+  border-radius:20px;
+  overflow:hidden;
+  position:relative;
+  background:#111;
+}
+.hero video{
+  width:100%;
+  height:200px;
+  object-fit:cover;
+  display:block;
+  filter:brightness(0.6);
+}
+.hero .hero-text{
+  position:absolute;
+  top:50%;left:50%;
+  transform:translate(-50%,-50%);
+  text-align:center;
+  width:80%;
+}
+.hero .hero-text .h-title{
+  font-size:22px;
+  font-weight:800;
+  letter-spacing:1px;
+  text-transform:uppercase;
+}
+.hero .hero-text .h-sub{
+  font-size:12px;
+  color:#e8a838;
+  margin-top:4px;
+  font-weight:600;
+}
+</style>
+</head>
+<body>
+
+<h1>Video Player Test</h1>
+<p>Testing HTML5 video tag on iOS. All videos are silent, autoplay, looping.</p>
+
+<hr class="divider">
+
+<!-- STYLE A: Card with gradient overlay -->
+<span class="tag">Style A: Card</span>
+<h2>Full width card with text overlay</h2>
+<div class="vid-card">
+  <video autoplay muted loop playsinline>
+    <source src="https://storage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4" type="video/mp4">
+  </video>
+  <div class="overlay">
+    <div class="title">Push Day</div>
+    <div class="sub">Chest · Shoulders · Triceps</div>
+  </div>
+</div>
+
+<div class="vid-card">
+  <video autoplay muted loop playsinline>
+    <source src="https://storage.googleapis.com/gtv-videos-bucket/sample/ForBiggerJoyrides.mp4" type="video/mp4">
+  </video>
+  <div class="overlay">
+    <div class="title">Pull Day</div>
+    <div class="sub">Back · Biceps · Rear Delts</div>
+  </div>
+</div>
+
+<hr class="divider">
+
+<!-- STYLE B: Horizontal scroll strip -->
+<span class="tag">Style B: Scroll Strip</span>
+<h2>Horizontal strip (like the vibes section)</h2>
+<div class="strip">
+  <div class="strip-item">
+    <video autoplay muted loop playsinline>
+      <source src="https://storage.googleapis.com/gtv-videos-bucket/sample/ForBiggerBlazes.mp4" type="video/mp4">
+    </video>
+    <div class="strip-label">Bench Press</div>
+  </div>
+  <div class="strip-item">
+    <video autoplay muted loop playsinline>
+      <source src="https://storage.googleapis.com/gtv-videos-bucket/sample/ForBiggerEscapes.mp4" type="video/mp4">
+    </video>
+    <div class="strip-label">OHP</div>
+  </div>
+  <div class="strip-item">
+    <video autoplay muted loop playsinline>
+      <source src="https://storage.googleapis.com/gtv-videos-bucket/sample/ForBiggerFun.mp4" type="video/mp4">
+    </video>
+    <div class="strip-label">Laterals</div>
+  </div>
+  <div class="strip-item">
+    <video autoplay muted loop playsinline>
+      <source src="https://storage.googleapis.com/gtv-videos-bucket/sample/ForBiggerJoyrides.mp4" type="video/mp4">
+    </video>
+    <div class="strip-label">Tricep Push</div>
+  </div>
+</div>
+
+<hr class="divider">
+
+<!-- STYLE C: Hero banner -->
+<span class="tag">Style C: Hero Banner</span>
+<h2>Darkened hero with centered text</h2>
+<div class="hero">
+  <video autoplay muted loop playsinline>
+    <source src="https://storage.googleapis.com/gtv-videos-bucket/sample/ForBiggerMeltdowns.mp4" type="video/mp4">
+  </video>
+  <div class="hero-text">
+    <div class="h-title">Push Day</div>
+    <div class="h-sub">Week 4 · Session 13</div>
+  </div>
+</div>
+
+<div class="hero">
+  <video autoplay muted loop playsinline>
+    <source src="https://storage.googleapis.com/gtv-videos-bucket/sample/ForBiggerEscapes.mp4" type="video/mp4">
+  </video>
+  <div class="hero-text">
+    <div class="h-title">Legs Day</div>
+    <div class="h-sub">Week 4 · Session 14</div>
+  </div>
+</div>
+
+<hr class="divider">
+<p style="color:#e8a838">These are placeholder videos (Google sample clips). Tell me:</p>
+<p>1. Do the videos autoplay silently?</p>
+<p>2. Do they loop?</p>
+<p>3. Which style (A, B, or C) looks best on your phone?</p>
+<p>4. Test from both Safari and the home screen app if you can.</p>
+
+</body>
+</html>
