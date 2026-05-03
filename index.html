@@ -232,6 +232,19 @@ input[type=number]::-webkit-inner-spin-button{-webkit-appearance:none}
 .coach-link{color:#5ec4f4;text-decoration:underline}
 .coach-clear{background:none;border:1px solid rgba(255,255,255,.08);color:rgba(255,255,255,.5);border-radius:18px;padding:6px 12px;font-size:11px;font-weight:600;cursor:pointer;-webkit-tap-highlight-color:transparent}
 .coach-clear:active{background:rgba(255,255,255,.05)}
+.coach-proposal{margin-top:8px;padding:12px 14px;background:rgba(232,168,56,.08);border:1px solid rgba(232,168,56,.3);border-radius:12px}
+.coach-proposal-title{font-size:11px;color:#e8a838;text-transform:uppercase;letter-spacing:1.2px;font-weight:700;margin-bottom:6px}
+.coach-proposal-summary{font-size:13px;color:rgba(255,255,255,.85);line-height:1.45;margin-bottom:10px}
+.coach-proposal-diff{font-size:12px;color:rgba(255,255,255,.6);font-family:ui-monospace,Menlo,monospace;line-height:1.5;margin-bottom:10px;white-space:pre-wrap}
+.coach-proposal-row{display:flex;gap:8px}
+.coach-proposal-row button{flex:1;border-radius:10px;padding:10px;font-size:13px;font-weight:700;cursor:pointer;-webkit-tap-highlight-color:transparent;border:none}
+.coach-apply{background:#e8a838;color:#000}
+.coach-apply:active{background:#d49530}
+.coach-skip{background:rgba(255,255,255,.05);color:rgba(255,255,255,.6);border:1px solid rgba(255,255,255,.08)!important}
+.coach-skip:active{background:rgba(255,255,255,.08)}
+.coach-prefs-active{padding:10px 14px;background:rgba(232,168,56,.08);border:1px solid rgba(232,168,56,.3);border-radius:12px;margin:14px 0;display:flex;align-items:center;gap:10px;font-size:13px}
+.coach-prefs-active .summary{flex:1;color:rgba(255,255,255,.85)}
+.coach-prefs-revert{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.1);color:rgba(255,255,255,.85);border-radius:14px;padding:6px 12px;font-size:11px;font-weight:600;cursor:pointer}
 </style>
 </head>
 <body>
@@ -385,6 +398,8 @@ input[type=number]::-webkit-inner-spin-button{-webkit-appearance:none}
 
     <!-- CHAT (shown when key is saved) -->
     <div id="coach-chat-area" style="display:none">
+      <!-- Active AI prefs banner — only shown when prefs exist -->
+      <div id="coach-prefs-banner" style="display:none"></div>
       <div style="display:flex;flex-wrap:wrap;gap:6px;margin:14px 0 12px">
         <button class="coach-quick" onclick="askCoach('Suggest weights for my next session based on my recent training')">Suggest weights</button>
         <button class="coach-quick" onclick="askCoach('Should I deload this week? Use my recent RIR and weight progression to decide.')">Deload check</button>
@@ -1387,6 +1402,40 @@ function findEx(id){
   for(const d of DAYS)for(const e of(d.exercises||[]))if(e.id===id)return e;
   return null;
 }
+
+// AI-PREFS LAYER ───────────────────────────────────────────────────────
+// S.aiPrefs is an optional object the coach can populate with proposed
+// changes (after user taps Apply). Currently supports per-category
+// min/max overrides and a "boost" list of preferred exercise IDs that
+// get a 🤖 badge in the picker.
+//   S.aiPrefs = {
+//     appliedAt: "2026-05-03T...",
+//     summary:   "Boost arms, drop chest accessory to 1",
+//     categories: {
+//       push_chest: { max: 1 },
+//       push_tri:   { max: 3, boost: ["tri_kick"] },
+//       pull_bi:    { max: 3, boost: ["ham_curl"] }
+//     }
+//   }
+function getCatOverride(cat){
+  if(!cat || !cat.id) return null;
+  return ((S && S.aiPrefs && S.aiPrefs.categories) || {})[cat.id] || null;
+}
+function getCatLimits(cat){
+  const o = getCatOverride(cat) || {};
+  return {
+    min: (o.min != null) ? o.min : (cat ? cat.min : 0),
+    max: (o.max != null) ? o.max : (cat ? cat.max : 0)
+  };
+}
+function isExBoosted(catId, exId){
+  const o = ((S && S.aiPrefs && S.aiPrefs.categories) || {})[catId];
+  return !!(o && Array.isArray(o.boost) && o.boost.indexOf(exId) >= 0);
+}
+function hasAiPrefs(){
+  return !!(S && S.aiPrefs && S.aiPrefs.categories &&
+            Object.keys(S.aiPrefs.categories).length > 0);
+}
 function getExNativeDay(id){
   for(const d of DAYS)if((d.exercises||[]).some(e=>e.id===id))return d.id;
   return getDay().id;
@@ -1497,12 +1546,12 @@ function getSelectedForCat(catId, day){
     // For multi-exercise cats, union with the normal selection so the
     // user doesn't lose their other picks. For main cats (typically 1
     // exercise selected), this is the one we locked onto.
-    if(cat.isMain) return withCurrentData.slice(0, cat.max);
+    if(cat.isMain) return withCurrentData.slice(0, getCatLimits(cat).max);
     // Non-main: keep the locked ones plus fill to min/max with defaults
     const defaults = cat.exercises
       .filter(ex => getHist(ex.id).length>0 && !withCurrentData.includes(ex.id))
       .map(e=>e.id);
-    return [...withCurrentData, ...defaults].slice(0, cat.max);
+    return [...withCurrentData, ...defaults].slice(0, getCatLimits(cat).max);
   }
 
   // For main categories: auto-rotate to a different exercise each session
@@ -1511,12 +1560,20 @@ function getSelectedForCat(catId, day){
     return [rotation.recommended];
   }
 
-  // For non-main: prefer exercises the user has history with
-  const withHistory = cat.exercises.filter(ex=>getHist(ex.id).length>0);
-  if(withHistory.length >= cat.min){
-    return withHistory.slice(0, cat.max).map(e=>e.id);
+  // For non-main: prefer exercises the user has history with, but
+  // bubble AI-boosted exercises to the front so the picker biases
+  // toward the coach's emphasis.
+  const lim = getCatLimits(cat);
+  const sortByBoost = arr => arr.slice().sort((a, b) => {
+    const ai = isExBoosted(cat.id, a.id) ? 1 : 0;
+    const bi = isExBoosted(cat.id, b.id) ? 1 : 0;
+    return bi - ai; // boosted first
+  });
+  const withHistory = sortByBoost(cat.exercises.filter(ex=>getHist(ex.id).length>0));
+  if(withHistory.length >= lim.min){
+    return withHistory.slice(0, lim.max).map(e=>e.id);
   }
-  return cat.exercises.slice(0, cat.min).map(e=>e.id);
+  return sortByBoost(cat.exercises).slice(0, lim.min).map(e=>e.id);
 }
 
 function isExSelected(exId, day){
@@ -1529,17 +1586,18 @@ function toggleExSelection(exId, catId){
   const day = getDay();
   const cat = day.categories.find(c=>c.id===catId);
   if(!cat) return;
+  const lim = getCatLimits(cat);
   let sel = [...getSelectedForCat(catId, day)];
   const idx = sel.indexOf(exId);
   if(idx>=0){
     // Don't allow deselecting below minimum
-    if(sel.length <= cat.min){
-      showToast(`Need at least ${cat.min} for ${cat.name}`);
+    if(sel.length <= lim.min){
+      showToast(`Need at least ${lim.min} for ${cat.name}`);
       return;
     }
     sel.splice(idx,1);
   } else {
-    if(sel.length >= cat.max){
+    if(sel.length >= lim.max){
       // Replace the first one not in current session data
       const toRemove = sel.find(id=>!S.setData[`${id}-0`]) || sel[0];
       sel = sel.filter(id=>id!==toRemove);
@@ -2430,18 +2488,26 @@ function render(){
   day.categories.forEach(cat=>{
     const sel = getSelectedForCat(cat.id, day);
 
-    // Category header
+    // Category header (limits respect AI overrides)
+    const catLim = getCatLimits(cat);
+    const overridden = !!getCatOverride(cat);
     html+=`<div class="cat-header">
-      <div class="cat-name" style="color:${day.color}">${cat.name}${cat.isMain?' ⭐':''}</div>
-      <div class="cat-req">Pick ${cat.min}${cat.max>cat.min?' to '+cat.max:''}</div>
+      <div class="cat-name" style="color:${day.color}">${cat.name}${cat.isMain?' ⭐':''}${overridden?' <span title="Adjusted by AI Coach" style="color:#e8a838;font-size:11px">🤖</span>':''}</div>
+      <div class="cat-req">Pick ${catLim.min}${catLim.max>catLim.min?' to '+catLim.max:''}</div>
     </div>`;
 
-    // Exercise picker
+    // Exercise picker (boosted exercises sort first, get a 🤖 badge)
     html+=`<div class="cat-pick-bar" style="--dc:${day.color}">`;
-    cat.exercises.forEach(ex=>{
+    const sortedExs = cat.exercises.slice().sort((a,b)=>{
+      const ai = isExBoosted(cat.id, a.id) ? 1 : 0;
+      const bi = isExBoosted(cat.id, b.id) ? 1 : 0;
+      return bi - ai;
+    });
+    sortedExs.forEach(ex=>{
       const isSel = sel.includes(ex.id);
-      html+=`<button class="cat-pick ${isSel?'active':''}" onclick="toggleExSelection('${ex.id}','${cat.id}')" style="--dc:${day.color}">
-        <span class="cp-check">${isSel?'✓ ':''}</span>${pillLabel(ex, cat)}
+      const boosted = isExBoosted(cat.id, ex.id);
+      html+=`<button class="cat-pick ${isSel?'active':''}" onclick="toggleExSelection('${ex.id}','${cat.id}')" style="--dc:${day.color}" title="${boosted?'Boosted by AI Coach':''}">
+        <span class="cp-check">${isSel?'✓ ':''}</span>${boosted?'🤖 ':''}${pillLabel(ex, cat)}
       </button>`;
     });
     html+=`</div>`;
@@ -3048,8 +3114,10 @@ function openCoachSheet(){
   document.getElementById('coach-key-row').style.display   = hasKey ? 'none'  : 'block';
   document.getElementById('coach-chat-area').style.display = hasKey ? 'block' : 'none';
   overlay.classList.remove('hidden');
-  // Render any existing conversation so the user sees it on re-open.
-  if(hasKey) renderCoachThread();
+  if(hasKey){
+    renderCoachPrefsBanner();
+    renderCoachThread();
+  }
 }
 function closeCoachSheet(){
   document.getElementById('coach-overlay').classList.add('hidden');
@@ -3112,14 +3180,20 @@ function buildCoachContext(){
     lines.push((day.label || day.id) + sub);
     for(const cat of day.categories){
       const main = cat.isMain ? ' [MAIN LIFT]' : '';
-      const constraint = cat.min === cat.max
-        ? 'pick ' + cat.min + ' of ' + cat.exercises.length
-        : 'pick ' + cat.min + '-' + cat.max + ' of ' + cat.exercises.length;
-      lines.push('  [' + cat.name + ']' + main + ' — ' + constraint + ':');
+      const lim = getCatLimits(cat);
+      const overridden = !!getCatOverride(cat);
+      const baseHint = overridden && (lim.min !== cat.min || lim.max !== cat.max)
+        ? ' (was ' + cat.min + '-' + cat.max + ', now AI-adjusted)'
+        : '';
+      const constraint = lim.min === lim.max
+        ? 'pick ' + lim.min + ' of ' + cat.exercises.length
+        : 'pick ' + lim.min + '-' + lim.max + ' of ' + cat.exercises.length;
+      lines.push('  [' + cat.name + ' / id:' + cat.id + ']' + main + ' — ' + constraint + baseHint + ':');
       for(const ex of cat.exercises){
         const sw = (ex.sw != null) ? (ex.sw + (ex.unit ? ex.unit : '')) : 'BW';
         const equip = ex.equip ? ' (' + ex.equip + ')' : '';
-        lines.push('    - ' + ex.id + ' = ' + ex.name + ' | ' + ex.sets + '×' + ex.rep + ' | start: ' + sw + equip);
+        const boosted = isExBoosted(cat.id, ex.id) ? ' 🤖boosted' : '';
+        lines.push('    - ' + ex.id + ' = ' + ex.name + ' | ' + ex.sets + '×' + ex.rep + ' | start: ' + sw + equip + boosted);
       }
     }
   }
@@ -3225,6 +3299,152 @@ function _esc(s){
   return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
 
+// Index categories by id across all days for fast lookup + validation
+function _findCatById(catId){
+  for(const d of (typeof DAYS !== 'undefined' ? DAYS : [])){
+    for(const c of (d.categories || [])){
+      if(c.id === catId) return c;
+    }
+  }
+  return null;
+}
+
+// Extract a <changes>{...}</changes> JSON proposal from coach text.
+// Returns { visibleText, proposal } where proposal is null if none/invalid.
+function parseCoachProposal(text){
+  if(!text) return { visibleText: text, proposal: null };
+  const m = text.match(/<changes>\s*([\s\S]*?)\s*<\/changes>/i);
+  if(!m) return { visibleText: text, proposal: null };
+  let parsed = null;
+  try { parsed = JSON.parse(m[1]); } catch(e){ return { visibleText: text, proposal: null }; }
+
+  // Validate + sanitize against the real catalog. Silently drop any
+  // unknown category IDs or out-of-range values.
+  const cleanCats = {};
+  if(parsed && parsed.categories && typeof parsed.categories === 'object'){
+    for(const catId of Object.keys(parsed.categories)){
+      const cat = _findCatById(catId);
+      if(!cat) continue;
+      const o = parsed.categories[catId] || {};
+      const out = {};
+      const total = (cat.exercises || []).length;
+      if(Number.isInteger(o.min) && o.min >= 0 && o.min <= total) out.min = o.min;
+      if(Number.isInteger(o.max) && o.max >= 0 && o.max <= total) out.max = o.max;
+      if(out.min != null && out.max != null && out.min > out.max){
+        // Reverse if AI got them backwards
+        const t = out.min; out.min = out.max; out.max = t;
+      }
+      if(Array.isArray(o.boost)){
+        const validIds = new Set((cat.exercises || []).map(e => e.id));
+        out.boost = o.boost.filter(id => validIds.has(id));
+        if(out.boost.length === 0) delete out.boost;
+      }
+      if(Object.keys(out).length > 0) cleanCats[catId] = out;
+    }
+  }
+  if(Object.keys(cleanCats).length === 0) return { visibleText: text.replace(m[0], '').trim(), proposal: null };
+
+  const visibleText = text.replace(m[0], '').trim();
+  return {
+    visibleText,
+    proposal: {
+      summary: typeof parsed.summary === 'string' ? parsed.summary.slice(0, 200) : 'AI-proposed changes',
+      categories: cleanCats
+    }
+  };
+}
+
+// Render a textual diff of what'd change vs current state
+function _proposalDiffText(proposal){
+  const lines = [];
+  for(const catId of Object.keys(proposal.categories)){
+    const cat = _findCatById(catId);
+    if(!cat) continue;
+    const cur = getCatLimits(cat);
+    const o = proposal.categories[catId];
+    const newMin = (o.min != null) ? o.min : cur.min;
+    const newMax = (o.max != null) ? o.max : cur.max;
+    let limPart = '';
+    if(newMin !== cur.min || newMax !== cur.max){
+      limPart = ' picks ' + cur.min + (cur.max>cur.min?'-'+cur.max:'') +
+                ' → ' + newMin + (newMax>newMin?'-'+newMax:'');
+    }
+    const boostPart = (o.boost && o.boost.length)
+      ? ' boost: ' + o.boost.map(id => {
+          const ex = (cat.exercises || []).find(e => e.id === id);
+          return ex ? ex.name : id;
+        }).join(', ')
+      : '';
+    lines.push('• ' + cat.name + limPart + boostPart);
+  }
+  return lines.join('\n');
+}
+
+// Apply a proposal: replace S.aiPrefs entirely (simpler than merging),
+// reset session-level picks for any touched category so the new
+// limits take effect immediately, save, and re-render.
+function applyCoachProposal(historyIdx){
+  const msg = _coachHistory[historyIdx];
+  if(!msg || !msg.proposal) return;
+  S.aiPrefs = {
+    appliedAt: new Date().toISOString(),
+    summary:   msg.proposal.summary,
+    categories: msg.proposal.categories
+  };
+  // Wipe the user-explicit picks for affected categories so the new
+  // limits take effect (defaults will repopulate respecting overrides).
+  if(S.selectedEx){
+    for(const catId of Object.keys(msg.proposal.categories)){
+      delete S.selectedEx[catId];
+    }
+  }
+  // Mark this message's proposal as applied so the apply card hides
+  msg.proposalApplied = true;
+  saveCoachHistory();
+  save();
+  renderCoachPrefsBanner();
+  renderCoachThread();
+  if(typeof render === 'function') render();
+  showToast('🤖 Coach changes applied');
+}
+
+function dismissCoachProposal(historyIdx){
+  const msg = _coachHistory[historyIdx];
+  if(!msg) return;
+  msg.proposalDismissed = true;
+  saveCoachHistory();
+  renderCoachThread();
+}
+
+function revertCoachPrefs(){
+  if(!hasAiPrefs()) return;
+  if(!confirm('Revert AI Coach changes and go back to defaults?')) return;
+  delete S.aiPrefs;
+  // Clear user picks too so defaults repopulate against the reverted limits
+  if(S.selectedEx) S.selectedEx = {};
+  save();
+  renderCoachPrefsBanner();
+  renderCoachThread();
+  if(typeof render === 'function') render();
+  showToast('Reverted to defaults');
+}
+
+function renderCoachPrefsBanner(){
+  const banner = document.getElementById('coach-prefs-banner');
+  if(!banner) return;
+  if(!hasAiPrefs()){
+    banner.style.display = 'none';
+    banner.innerHTML = '';
+    return;
+  }
+  const summary = (S.aiPrefs && S.aiPrefs.summary) || 'AI changes active';
+  banner.style.display = 'block';
+  banner.className = 'coach-prefs-active';
+  banner.innerHTML =
+    '<div class="summary">🤖 ' + _esc(summary) + '</div>' +
+    '<button class="coach-prefs-revert" onclick="revertCoachPrefs()">Revert</button>';
+}
+
 // CONVERSATION STATE -------------------------------------------------
 // Multi-turn chat. The thread is persisted in localStorage so reloading
 // the app keeps the conversation. We cap to MAX_TURNS pairs to keep
@@ -3266,16 +3486,34 @@ function renderCoachThread(loadingMsg){
   }
   wrap.style.display = 'block';
   let html = '';
-  for(const msg of _coachHistory){
+  for(let i = 0; i < _coachHistory.length; i++){
+    const msg = _coachHistory[i];
     const cls = msg.role === 'user' ? 'user' : 'assistant';
     const bubble = msg.role === 'user' ? 'coach-user' : 'coach-resp';
-    html += '<div class="coach-msg-row ' + cls + '"><div class="' + bubble + '">' + _esc(msg.content) + '</div></div>';
+    const visibleText = msg.content || (msg.proposal ? '(proposed changes)' : '');
+    html += '<div class="coach-msg-row ' + cls + '"><div class="' + bubble + '">' + _esc(visibleText) + '</div></div>';
+    // If this assistant message has a proposal that hasn't been applied
+    // or dismissed yet, render an Apply / Skip card under it.
+    if(msg.proposal && !msg.proposalApplied && !msg.proposalDismissed){
+      const diff = _proposalDiffText(msg.proposal);
+      html +=
+        '<div class="coach-msg-row assistant"><div class="coach-proposal" style="max-width:88%">' +
+          '<div class="coach-proposal-title">🤖 Coach proposes</div>' +
+          '<div class="coach-proposal-summary">' + _esc(msg.proposal.summary) + '</div>' +
+          (diff ? '<div class="coach-proposal-diff">' + _esc(diff) + '</div>' : '') +
+          '<div class="coach-proposal-row">' +
+            '<button class="coach-apply" onclick="applyCoachProposal(' + i + ')">Apply changes</button>' +
+            '<button class="coach-skip" onclick="dismissCoachProposal(' + i + ')">Skip</button>' +
+          '</div>' +
+        '</div></div>';
+    } else if(msg.proposalApplied){
+      html += '<div class="coach-msg-row assistant"><div class="coach-loading" style="font-style:normal;color:#5ec46a;padding:6px 14px">✓ Applied</div></div>';
+    }
   }
   if(loadingMsg){
     html += '<div class="coach-msg-row assistant"><div class="coach-loading">' + _esc(loadingMsg) + '</div></div>';
   }
   thread.innerHTML = html;
-  // Auto-scroll to the latest message.
   requestAnimationFrame(()=>{ thread.scrollTop = thread.scrollHeight; });
 }
 
@@ -3303,6 +3541,23 @@ async function askCoach(question){
       'answers under 220 words. Be direct: short justification, then the ' +
       'recommendation. No fluff, no disclaimers. Remember the conversation ' +
       'so far and build on previous answers when the user follows up.\n\n' +
+      'WHEN THE USER ASKS TO CHANGE THEIR PLAN — e.g. "focus more on arms", ' +
+      '"add bicep work", "drop chest accessory", "swap pulldowns for rows" ' +
+      '— give a brief justification AND append a JSON proposal at the end ' +
+      'of your response wrapped in <changes> tags. Schema:\n' +
+      '<changes>\n' +
+      '{\n' +
+      '  "summary": "<one-sentence description of changes>",\n' +
+      '  "categories": {\n' +
+      '    "<category_id>": { "min": <int?>, "max": <int?>, "boost": [<exercise_ids>] }\n' +
+      '  }\n' +
+      '}\n' +
+      '</changes>\n' +
+      'Use category IDs and exercise IDs EXACTLY as they appear in PROGRAM. ' +
+      'Only include fields you want to change. Boost = exercises to highlight ' +
+      'and prefer in selection. Change at most 3 categories per proposal. ' +
+      'For pure questions (no plan change requested), respond normally with ' +
+      'no <changes> block.\n\n' +
       'CURRENT TRAINING DATA:\n' + buildCoachContext();
 
     const messages = [{ role: 'system', content: systemContent }].concat(_coachHistory);
@@ -3348,7 +3603,12 @@ async function askCoach(question){
       renderCoachThread();
       return;
     }
-    _coachHistory.push({ role: 'assistant', content: text });
+    // Pull any <changes> proposal out so the visible message text is
+    // clean and the proposal lives as structured data on the message.
+    const parsed = parseCoachProposal(text);
+    const msg = { role: 'assistant', content: parsed.visibleText || text };
+    if(parsed.proposal) msg.proposal = parsed.proposal;
+    _coachHistory.push(msg);
     saveCoachHistory();
     renderCoachThread();
   } catch(e){
