@@ -387,7 +387,6 @@ input[type=number]::-webkit-inner-spin-button{-webkit-appearance:none}
       <textarea id="coach-input" class="coach-input" placeholder="Ask anything about your training..."></textarea>
       <button class="sheet-confirm" style="background:#e8a838;color:#000;margin-top:10px" onclick="askCoachCustom()">Ask Coach →</button>
       <div id="coach-response" style="margin-top:14px"></div>
-      <button class="sheet-cancel" onclick="resetCoachKey()" style="margin-top:6px;font-size:12px">Change API Key</button>
     </div>
 
     <button class="sheet-cancel" onclick="closeCoachSheet()">Close</button>
@@ -3031,8 +3030,19 @@ document.addEventListener('click', function(e){
 // specific weight + exercise advice.
 const COACH_KEY_LS = 'wt_gemini_key';
 const COACH_MODEL  = 'gemini-2.5-flash';
+// Embedded fallback key. The owner accepts the trade-off: GitHub may
+// flag this, Google may auto-disable it, bots may consume the free
+// quota. Override at runtime by saving a key in the in-app settings —
+// the localStorage value always wins.
+const COACH_EMBEDDED_KEY = 'AIzaSyBDuxTOdwZjHOV1IO1bWkZdv_MW_xPJ84E';
 
-function getCoachKey(){ try{ return localStorage.getItem(COACH_KEY_LS) || ''; }catch(e){ return ''; } }
+function getCoachKey(){
+  try{
+    const k = localStorage.getItem(COACH_KEY_LS);
+    if(k) return k;
+  }catch(e){}
+  return COACH_EMBEDDED_KEY || '';
+}
 function setCoachKeyLS(k){ try{ localStorage.setItem(COACH_KEY_LS, k); }catch(e){} }
 function clearCoachKey(){ try{ localStorage.removeItem(COACH_KEY_LS); }catch(e){} }
 
