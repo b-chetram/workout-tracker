@@ -195,8 +195,9 @@ input[type=number]::-webkit-inner-spin-button{-webkit-appearance:none}
 .vibe-title{font-size:22px;font-weight:800;letter-spacing:-.3px;position:relative;z-index:1}
 .vibe-genre{font-size:9px;color:rgba(255,255,255,.35);text-transform:uppercase;letter-spacing:2px;font-weight:600;margin-top:4px;position:relative;z-index:1}
 .vibe-tracks{margin-top:16px;position:relative;z-index:1}
-.vtrack{border-bottom:1px solid rgba(255,255,255,.04)}
+.vtrack{border-bottom:1px solid rgba(255,255,255,.04);display:flex;align-items:center;gap:12px;padding:9px 0;cursor:pointer;-webkit-tap-highlight-color:transparent;transition:background .15s,transform .12s}
 .vtrack:last-child{border-bottom:none}
+.vtrack:active{background:rgba(255,255,255,.04);transform:scale(.985)}
 .vtrack a{display:flex;align-items:center;gap:12px;padding:9px 0;text-decoration:none;color:inherit}
 .vt-art{width:44px;height:44px;border-radius:10px;flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:16px;font-weight:800;color:rgba(255,255,255,.7);letter-spacing:-.5px;overflow:hidden;position:relative}
 .vt-art img{width:100%;height:100%;object-fit:cover;position:absolute;inset:0}
@@ -214,6 +215,16 @@ input[type=number]::-webkit-inner-spin-button{-webkit-appearance:none}
 .mini-name{font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .mini-artist{font-size:10px;color:rgba(255,255,255,.25);font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .mini-tag{font-size:8px;color:rgba(255,255,255,.15);letter-spacing:1.5px;text-transform:uppercase;font-weight:700;flex-shrink:0}
+/* AI Coach */
+.coach-input,.coach-key{width:100%;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.08);border-radius:12px;padding:12px 14px;color:#fff;font:inherit;font-size:14px;box-sizing:border-box;outline:none}
+.coach-input{resize:none;min-height:72px;line-height:1.4}
+.coach-input:focus,.coach-key:focus{border-color:rgba(255,255,255,.2)}
+.coach-quick{background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.06);color:rgba(255,255,255,.85);border-radius:18px;padding:8px 14px;font-size:12px;font-weight:600;cursor:pointer;-webkit-tap-highlight-color:transparent}
+.coach-quick:active{background:rgba(255,255,255,.1)}
+.coach-resp{white-space:pre-wrap;line-height:1.55;padding:14px;background:rgba(255,255,255,.04);border-radius:12px;font-size:14px;color:rgba(255,255,255,.92)}
+.coach-err{padding:14px;background:rgba(232,93,93,.1);border:1px solid rgba(232,93,93,.3);border-radius:12px;color:#e85d5d;font-size:13px;line-height:1.5}
+.coach-loading{padding:14px;color:rgba(255,255,255,.5);font-size:14px;text-align:center;font-style:italic}
+.coach-link{color:#5ec4f4;text-decoration:underline}
 </style>
 </head>
 <body>
@@ -348,6 +359,41 @@ input[type=number]::-webkit-inner-spin-button{-webkit-appearance:none}
   </div>
 </div>
 
+<!-- AI COACH SHEET -->
+<div class="overlay hidden" id="coach-overlay" onclick="handleOverlayClick(event,'coach')">
+  <div class="sheet">
+    <div class="sheet-title">AI Coach 🤖</div>
+    <div class="sheet-sub">Powered by Google Gemini · Free</div>
+
+    <!-- API KEY ENTRY (shown when no key saved) -->
+    <div id="coach-key-row" style="display:none">
+      <div style="font-size:13px;color:rgba(255,255,255,.65);line-height:1.5;margin:14px 0 16px">
+        Get a free API key at
+        <a class="coach-link" href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener">aistudio.google.com/app/apikey</a>.
+        It's stored only on your phone — never sent anywhere except Google.
+      </div>
+      <input id="coach-key-input" class="coach-key" type="password" placeholder="Paste your AIza... key" autocomplete="off" spellcheck="false">
+      <button class="sheet-confirm" style="background:#5ec46a;color:#000;margin-top:12px" onclick="saveCoachKey()">Save Key</button>
+    </div>
+
+    <!-- CHAT (shown when key is saved) -->
+    <div id="coach-chat-area" style="display:none">
+      <div style="display:flex;flex-wrap:wrap;gap:6px;margin:14px 0 12px">
+        <button class="coach-quick" onclick="askCoach('Suggest weights for my next session based on my recent training')">Suggest weights</button>
+        <button class="coach-quick" onclick="askCoach('Should I deload this week? Use my recent RIR and weight progression to decide.')">Deload check</button>
+        <button class="coach-quick" onclick="askCoach('Recommend exercise alternatives for any lifts I have stalled on')">Alt exercises</button>
+        <button class="coach-quick" onclick="askCoach('Give me a quick overall analysis of how my training has been trending')">Analyze training</button>
+      </div>
+      <textarea id="coach-input" class="coach-input" placeholder="Ask anything about your training..."></textarea>
+      <button class="sheet-confirm" style="background:#e8a838;color:#000;margin-top:10px" onclick="askCoachCustom()">Ask Coach →</button>
+      <div id="coach-response" style="margin-top:14px"></div>
+      <button class="sheet-cancel" onclick="resetCoachKey()" style="margin-top:6px;font-size:12px">Change API Key</button>
+    </div>
+
+    <button class="sheet-cancel" onclick="closeCoachSheet()">Close</button>
+  </div>
+</div>
+
 <!-- TRACKER -->
 <div id="view-tracker" class="view active">
   <div class="topbar">
@@ -367,6 +413,7 @@ input[type=number]::-webkit-inner-spin-button{-webkit-appearance:none}
         <button class="tbtn" onclick="showView('history')">📊 Log</button>
         <button class="tbtn" onclick="showView('vibes')">🎵</button>
         <button class="tbtn" onclick="showView('plateau')">📈</button>
+        <button class="tbtn" onclick="openCoachSheet()">🤖</button>
       </div>
     </div>
     <div class="sbar">
@@ -1859,6 +1906,7 @@ function handleOverlayClick(e,which){
     if(which==='sess')closeSessSheet();
     if(which==='skip')closeSkipSheet();
     if(which==='fb')closeFbSheet();
+    if(which==='coach')closeCoachSheet();
   }
 }
 
@@ -2938,6 +2986,184 @@ function handleReset(){
 }
 
 
+
+// ══════════════════════════════════════════════════════════════════════
+// APPLE MUSIC TAP-TO-PLAY
+// ══════════════════════════════════════════════════════════════════════
+// Each .vtrack in the Vibes view is wired through event delegation so
+// tapping it deep-links into the iPhone Music app's search results for
+// that exact song + artist. No API key, no developer account — just
+// the standard music:// URL scheme that iOS already routes to Music.
+document.addEventListener('click', function(e){
+  const row = e.target.closest('.vtrack');
+  if(!row) return;
+  const name   = row.querySelector('.vt-name')?.textContent?.trim();
+  const artist = row.querySelector('.vt-artist')?.textContent?.trim();
+  if(!name) return;
+  buzz(HAPTIC_SET);
+  const q = encodeURIComponent(name + (artist ? ' ' + artist : ''));
+  // music:// is iOS's deep-link scheme for the Music app. The https
+  // form is a universal-link fallback iOS auto-redirects to Music.
+  // Try the scheme first; if nothing intercepts (desktop/Android),
+  // fall through to the web URL.
+  const scheme = 'music://music.apple.com/search?term=' + q;
+  const web    = 'https://music.apple.com/search?term=' + q;
+  // Use a hidden iframe trick so failure to handle the scheme doesn't
+  // navigate away from the app on desktop. On iOS, the scheme handler
+  // takes over immediately.
+  let handled = false;
+  const tStart = Date.now();
+  const onHide = ()=>{ handled = true; };
+  document.addEventListener('visibilitychange', onHide, { once: true });
+  window.location.href = scheme;
+  setTimeout(()=>{
+    document.removeEventListener('visibilitychange', onHide);
+    if(!handled && Date.now() - tStart < 1500) window.open(web, '_blank');
+  }, 600);
+});
+
+// ══════════════════════════════════════════════════════════════════════
+// AI COACH (Google Gemini)
+// ══════════════════════════════════════════════════════════════════════
+// Free with a Gemini API key the user gets at aistudio.google.com.
+// Key lives only in localStorage on this device. The coach reads the
+// real DB / S state, summarizes recent training, and asks Gemini for
+// specific weight + exercise advice.
+const COACH_KEY_LS = 'wt_gemini_key';
+const COACH_MODEL  = 'gemini-2.5-flash';
+
+function getCoachKey(){ try{ return localStorage.getItem(COACH_KEY_LS) || ''; }catch(e){ return ''; } }
+function setCoachKeyLS(k){ try{ localStorage.setItem(COACH_KEY_LS, k); }catch(e){} }
+function clearCoachKey(){ try{ localStorage.removeItem(COACH_KEY_LS); }catch(e){} }
+
+function openCoachSheet(){
+  const overlay = document.getElementById('coach-overlay');
+  const hasKey  = !!getCoachKey();
+  document.getElementById('coach-key-row').style.display   = hasKey ? 'none'  : 'block';
+  document.getElementById('coach-chat-area').style.display = hasKey ? 'block' : 'none';
+  overlay.classList.remove('hidden');
+}
+function closeCoachSheet(){
+  document.getElementById('coach-overlay').classList.add('hidden');
+}
+function saveCoachKey(){
+  const v = document.getElementById('coach-key-input').value.trim();
+  if(!v){ showToast('⚠️ Enter your API key'); return; }
+  setCoachKeyLS(v);
+  document.getElementById('coach-key-input').value = '';
+  document.getElementById('coach-key-row').style.display   = 'none';
+  document.getElementById('coach-chat-area').style.display = 'block';
+  showToast('✅ Key saved');
+}
+function resetCoachKey(){
+  if(!confirm('Remove your saved API key?')) return;
+  clearCoachKey();
+  document.getElementById('coach-key-row').style.display   = 'block';
+  document.getElementById('coach-chat-area').style.display = 'none';
+  document.getElementById('coach-response').innerHTML = '';
+}
+
+// Build a compact text summary of the lifter's actual training data
+// so Gemini can give specific advice. Last ~5 sessions per exercise.
+function buildCoachContext(){
+  const lines = [];
+  const today = new Date().toISOString().slice(0,10);
+  lines.push('Today: ' + today);
+  lines.push('Default rest: ' + getRestSec() + 's');
+  if(S && S.active){
+    const dayName = (DAYS[S.dayIdx] && DAYS[S.dayIdx].label) || (DAYS[S.dayIdx] && DAYS[S.dayIdx].id) || '?';
+    lines.push('Active session: Week ' + S.week + ', Session ' + S.session + ' (' + dayName + ')');
+  } else if(S){
+    lines.push('No active session. Last position: Week ' + S.week + ', Session ' + S.session);
+  }
+  if(S && S.deload && S.deload.lastWeek){
+    lines.push('Last deload: week ' + S.deload.lastWeek);
+  }
+
+  const exIds = Object.keys(DB || {});
+  if(exIds.length === 0){
+    lines.push('\nNo logged exercise history yet.');
+    return lines.join('\n');
+  }
+  lines.push('\nRecent training (last 5 sessions per exercise — format: weight×reps@RIR):');
+  for(const exId of exIds){
+    const ex = findEx(exId);
+    const exName = ex ? ex.name : exId;
+    const unit = ex ? (ex.unit || '') : '';
+    const recent = (DB[exId] || []).slice(-5);
+    if(recent.length === 0) continue;
+    const summaries = recent.map(e => {
+      const sets = (e.sets || []).filter(s => s).map(s => {
+        const r = (s.rir == null || s.rir === '') ? '?' : s.rir;
+        return s.weight + (unit ? unit : '') + '×' + s.reps + '@RIR' + r;
+      }).join(', ');
+      return 'wk' + e.week + 's' + e.session + ': ' + sets;
+    }).join(' | ');
+    lines.push('- ' + exName + ': ' + summaries);
+  }
+  return lines.join('\n');
+}
+
+function _esc(s){
+  return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+async function askCoach(question){
+  const key = getCoachKey();
+  if(!key){ showToast('⚠️ Set your API key first'); return; }
+  const responseEl = document.getElementById('coach-response');
+  responseEl.innerHTML = '<div class="coach-loading">Coach is thinking…</div>';
+  try {
+    const context = buildCoachContext();
+    const prompt =
+      'You are a strength training coach for a hypertrophy-focused lifter using ' +
+      'a workout tracker app. Use the user\'s actual training history to give ' +
+      'specific, actionable advice — concrete weights, rep targets, exercise ' +
+      'swaps. Keep answers under 220 words. Be direct: short justification, ' +
+      'then the recommendation. No fluff, no disclaimers.\n\n' +
+      'TRAINING DATA:\n' + context + '\n\n' +
+      'USER QUESTION:\n' + question;
+
+    const url = 'https://generativelanguage.googleapis.com/v1beta/models/' +
+                encodeURIComponent(COACH_MODEL) +
+                ':generateContent?key=' + encodeURIComponent(key);
+    const resp = await fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: prompt }] }],
+        generationConfig: { temperature: 0.6, maxOutputTokens: 600 }
+      })
+    });
+
+    if(!resp.ok){
+      const errText = await resp.text();
+      let msg = 'Error ' + resp.status;
+      try { const j = JSON.parse(errText); if(j.error && j.error.message) msg = j.error.message; } catch(e){}
+      responseEl.innerHTML = '<div class="coach-err">' + _esc(msg) + '</div>';
+      return;
+    }
+    const data = await resp.json();
+    const text = (((data || {}).candidates || [])[0] || {}).content
+                  ? data.candidates[0].content.parts.map(p => p.text || '').join('').trim()
+                  : '';
+    if(!text){
+      responseEl.innerHTML = '<div class="coach-err">No response. The model may have refused or returned empty content.</div>';
+      return;
+    }
+    responseEl.innerHTML = '<div class="coach-resp">' + _esc(text) + '</div>';
+  } catch(e){
+    responseEl.innerHTML = '<div class="coach-err">' + _esc(e && e.message ? e.message : 'Network error') + '</div>';
+  }
+}
+
+function askCoachCustom(){
+  const el = document.getElementById('coach-input');
+  const v = el.value.trim();
+  if(!v){ showToast('Type a question first'); return; }
+  el.value = '';
+  askCoach(v);
+}
 
 // ══════════════════════════════════════════════════════════════════════
 // INIT
