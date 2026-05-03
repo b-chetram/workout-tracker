@@ -206,9 +206,13 @@ input[type=number]::-webkit-inner-spin-button{-webkit-appearance:none}
 .vt-name{font-size:14px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;letter-spacing:-.1px}
 .vt-artist{font-size:11px;color:rgba(255,255,255,.3);font-weight:500;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .vt-vibe{font-size:9px;padding:3px 9px;border-radius:20px;background:rgba(255,255,255,.04);color:rgba(255,255,255,.3);font-weight:600;flex-shrink:0;letter-spacing:.3px}
-/* Mini player */
-.mini-p{display:flex;align-items:center;gap:10px;padding:10px 14px;margin:0 0 10px;background:rgba(255,255,255,.02);border-radius:14px;border:1px solid rgba(255,255,255,.04);cursor:pointer;transition:background .2s}
-.mini-p:active{background:rgba(255,255,255,.04)}
+/* Mini player — 80% main button (shuffle + preview) + 20% Apple Music button */
+.mini-p{display:flex;gap:6px;margin:0 0 10px}
+.mp-main{flex:1;display:flex;align-items:center;gap:10px;padding:10px 14px;background:rgba(255,255,255,.02);border:1px solid rgba(255,255,255,.04);border-radius:14px;cursor:pointer;transition:background .15s;text-align:left;color:inherit;font:inherit;-webkit-tap-highlight-color:transparent;min-width:0}
+.mp-main:active{background:rgba(255,255,255,.06)}
+.mp-main.playing{border-color:rgba(232,168,56,.4);background:rgba(232,168,56,.08)}
+.mp-am{flex-shrink:0;width:48px;background:rgba(255,255,255,.02);border:1px solid rgba(255,255,255,.04);border-radius:14px;display:flex;align-items:center;justify-content:center;font-size:18px;cursor:pointer;color:inherit;-webkit-tap-highlight-color:transparent;transition:background .15s}
+.mp-am:active{background:rgba(255,255,255,.06)}
 .mini-art{width:36px;height:36px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:800;color:rgba(255,255,255,.7);flex-shrink:0;overflow:hidden;position:relative}
 .mini-art img{width:100%;height:100%;object-fit:cover;position:absolute;inset:0}
 .mini-info{flex:1;min-width:0}
@@ -438,8 +442,6 @@ input[type=number]::-webkit-inner-spin-button{-webkit-appearance:none}
       </div>
       <div class="tb-btns">
         <button class="tbtn" onclick="showView('history')">📊 Log</button>
-        <button class="tbtn" onclick="showView('vibes')">🎵</button>
-        <button class="tbtn" onclick="showView('plateau')">📈</button>
         <button class="tbtn" onclick="openCoachSheet()">🤖</button>
       </div>
     </div>
@@ -1182,18 +1184,14 @@ const artCache={};
 // If both fail, the <img> is never appended and the gradient+letter
 // fallback in .vt-art stays visible. No broken image placeholders.
 function fetchArtwork(song,artist){
-  const key=song+'|'+artist;
-  if(artCache[key]!==undefined) return Promise.resolve(artCache[key]);
-  return fetchArtworkDeezer(song,artist).then(url=>{
-    if(url){ artCache[key]=url; return url; }
-    return fetchArtworkMusicBrainz(song,artist).then(url=>{
-      artCache[key]=url||null;
-      return artCache[key];
-    });
-  });
+  // Delegates to fetchSongData so a single Deezer JSONP call serves
+  // both artwork (this caller) and preview URL (the mini-player).
+  return fetchSongData(song,artist).then(d => d.artwork);
 }
 
-function fetchArtworkDeezer(song,artist){
+// Deezer search returns both album artwork and a 30-second preview URL
+// in one JSONP response. Extract both.
+function fetchSongDataDeezer(song,artist){
   return new Promise(resolve=>{
     const cbName='_dzcb_'+Math.floor(Math.random()*1e9);
     const script=document.createElement('script');
@@ -1202,22 +1200,50 @@ function fetchArtworkDeezer(song,artist){
       if(script.parentNode) script.parentNode.removeChild(script);
       clearTimeout(timer);
     };
-    const timer=setTimeout(()=>{ cleanup(); resolve(null); }, 6000);
+    const timer=setTimeout(()=>{ cleanup(); resolve({artwork:null, preview:null}); }, 6000);
     window[cbName]=function(data){
       cleanup();
       try{
-        if(data&&data.data&&data.data[0]&&data.data[0].album){
-          const a=data.data[0].album;
-          resolve(a.cover_big||a.cover_medium||a.cover||null);
+        if(data && data.data && data.data[0]){
+          const t = data.data[0];
+          const a = t.album || {};
+          resolve({
+            artwork: a.cover_big || a.cover_medium || a.cover || null,
+            preview: t.preview || null
+          });
           return;
         }
       }catch(e){}
-      resolve(null);
+      resolve({artwork:null, preview:null});
     };
-    script.onerror=()=>{ cleanup(); resolve(null); };
+    script.onerror=()=>{ cleanup(); resolve({artwork:null, preview:null}); };
     const q=encodeURIComponent(song+' '+artist);
     script.src='https://api.deezer.com/search?q='+q+'&limit=1&output=jsonp&callback='+cbName;
     (document.body||document.head||document.documentElement).appendChild(script);
+  });
+}
+
+// Backward-compat shim — older callers want only the artwork URL.
+function fetchArtworkDeezer(song,artist){
+  return fetchSongDataDeezer(song,artist).then(d => d.artwork);
+}
+
+// Combined cache: { "song|artist": { artwork, preview } }
+const songDataCache = {};
+function fetchSongData(song,artist){
+  const key = song+'|'+artist;
+  if(songDataCache[key] !== undefined) return Promise.resolve(songDataCache[key]);
+  return fetchSongDataDeezer(song,artist).then(deezer => {
+    if(deezer.artwork || deezer.preview){
+      songDataCache[key] = deezer;
+      return deezer;
+    }
+    // Deezer had nothing — fall back to MusicBrainz for artwork only.
+    return fetchArtworkMusicBrainz(song,artist).then(art => {
+      const result = { artwork: art || null, preview: null };
+      songDataCache[key] = result;
+      return result;
+    });
   });
 }
 
@@ -1243,19 +1269,83 @@ async function fetchArtworkMusicBrainz(song,artist){
 // by the document-level delegation in the APPLE MUSIC TAP-TO-PLAY
 // section, which deep-links to the actual song.
 
-// Mini player tap: pick a different random song and rerender.
-// Guarantees the new pick is not the same as the current one
-// (so consecutive taps always feel like something happened).
-function shuffleSong(e){
-  if(e&&e.preventDefault) e.preventDefault();
-  if(SONGS.length>1){
-    let next;
-    do { next=getRandomSong(); } while(next===window._currentSong);
-    window._currentSong=next;
-  } else {
-    window._currentSong=getRandomSong();
+// Mini player main button: shuffle to a new song AND auto-play a 30s
+// preview clip via Deezer. Replaces the old shuffleSong (silent shuffle).
+// Default app state is no audio — playback only starts after this tap.
+let _previewAudio = null;
+function getPreviewAudio(){
+  if(_previewAudio) return _previewAudio;
+  _previewAudio = new Audio();
+  _previewAudio.preload = 'none';
+  _previewAudio.volume  = 0.7;
+  _previewAudio.addEventListener('ended', () => {
+    window._previewPlaying = false;
+    if(typeof render === 'function') render();
+  });
+  _previewAudio.addEventListener('pause', () => {
+    if(_previewAudio && _previewAudio.currentTime === 0){
+      window._previewPlaying = false;
+    }
+  });
+  return _previewAudio;
+}
+function stopPreview(){
+  if(_previewAudio){
+    try { _previewAudio.pause(); _previewAudio.currentTime = 0; } catch(_){}
   }
-  render();
+  window._previewPlaying = false;
+}
+
+async function shuffleAndPreviewSong(e){
+  if(e){ e.preventDefault(); e.stopPropagation(); }
+  buzz(HAPTIC_SET);
+
+  // Pick a new song different from the current one
+  let next;
+  if(SONGS.length > 1){
+    do { next = getRandomSong(); } while(next === window._currentSong);
+  } else {
+    next = getRandomSong();
+  }
+  window._currentSong = next;
+  stopPreview();
+  render(); // shows the new song
+
+  // Fetch preview URL and play. iOS audio is unlocked here because we
+  // are inside a user gesture; subsequent play() resolves even after
+  // the async fetch on most modern iOS versions.
+  const data = await fetchSongData(next.n, next.a);
+  if(data && data.preview){
+    const audio = getPreviewAudio();
+    try {
+      audio.src = data.preview;
+      window._previewPlaying = true;
+      const p = audio.play();
+      if(p && p.catch){
+        p.catch(() => { window._previewPlaying = false; render(); });
+      }
+      render();
+    } catch(_){ window._previewPlaying = false; render(); }
+  }
+}
+
+// Mini player side button: open the CURRENT song in Apple Music.
+function openInAppleMusicSong(e){
+  if(e){ e.preventDefault(); e.stopPropagation(); }
+  const song = window._currentSong;
+  if(!song) return;
+  buzz(HAPTIC_SET);
+  // Same synthetic-anchor pattern used by the vtrack tap handler so
+  // iOS routes the music:// scheme without unloading the PWA.
+  const q = encodeURIComponent(song.n + ' ' + song.a);
+  const a = document.createElement('a');
+  a.href = 'music://music.apple.com/search?term=' + q;
+  a.target = '_blank';
+  a.rel = 'noopener';
+  a.style.display = 'none';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
 }
 
 // Apply artwork to element
@@ -2414,17 +2504,22 @@ function render(){
   btn.textContent=S.active?'New Session':'Start';
   btn.style.cssText=`border-radius:10px;padding:8px 14px;font-size:12px;font-weight:800;background:${S.active?'#2a2a2a':'#e8a838'};color:${S.active?'#888':'#000'}`;
 
-  // Mini player
+  // Mini player — main button shuffles AND auto-plays a 30s preview;
+  // side button opens the current song in Apple Music.
   if(!window._currentSong) window._currentSong=getRandomSong();
   const song=window._currentSong;
+  const playing = !!window._previewPlaying;
   document.getElementById('mini-player').innerHTML=`
-    <div class="mini-p" id="mp-link" onclick="shuffleSong(event)">
-      <div class="mini-art" id="mp-art" style="background:linear-gradient(135deg,${song.g})">${song.i}</div>
-      <div class="mini-info">
-        <div class="mini-name">${song.n}</div>
-        <div class="mini-artist">${song.a}</div>
-      </div>
-      <div class="mini-tag">🔀 Shuffle</div>
+    <div class="mini-p">
+      <button class="mp-main ${playing?'playing':''}" onclick="shuffleAndPreviewSong(event)" title="Tap to shuffle + preview">
+        <div class="mini-art" id="mp-art" style="background:linear-gradient(135deg,${song.g})">${song.i}</div>
+        <div class="mini-info">
+          <div class="mini-name">${song.n}</div>
+          <div class="mini-artist">${song.a}</div>
+        </div>
+        <div class="mini-tag">${playing?'▶':'🔀'}</div>
+      </button>
+      <button class="mp-am" onclick="openInAppleMusicSong(event)" title="Open in Apple Music">🎵</button>
     </div>`;
   renderMiniPlayer(document.getElementById('mp-art'),song);
 
