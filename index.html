@@ -211,8 +211,10 @@ input[type=number]::-webkit-inner-spin-button{-webkit-appearance:none}
 .mp-main{flex:1;display:flex;align-items:center;gap:10px;padding:10px 14px;background:rgba(255,255,255,.02);border:1px solid rgba(255,255,255,.04);border-radius:14px;cursor:pointer;transition:background .15s;text-align:left;color:inherit;font:inherit;-webkit-tap-highlight-color:transparent;min-width:0}
 .mp-main:active{background:rgba(255,255,255,.06)}
 .mp-main.playing{border-color:rgba(232,168,56,.4);background:rgba(232,168,56,.08)}
-.mp-am{flex-shrink:0;width:48px;background:rgba(255,255,255,.02);border:1px solid rgba(255,255,255,.04);border-radius:14px;display:flex;align-items:center;justify-content:center;font-size:18px;cursor:pointer;color:inherit;-webkit-tap-highlight-color:transparent;transition:background .15s}
-.mp-am:active{background:rgba(255,255,255,.06)}
+.mp-am,.mp-pause{flex-shrink:0;width:44px;background:rgba(255,255,255,.02);border:1px solid rgba(255,255,255,.04);border-radius:14px;display:flex;align-items:center;justify-content:center;font-size:16px;cursor:pointer;color:inherit;-webkit-tap-highlight-color:transparent;transition:background .15s,opacity .15s}
+.mp-am:active,.mp-pause:active{background:rgba(255,255,255,.06)}
+.mp-pause[disabled]{opacity:.35;cursor:default}
+.mp-pause.playing{border-color:rgba(232,168,56,.4);background:rgba(232,168,56,.08);color:#e8a838}
 .mini-art{width:36px;height:36px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:800;color:rgba(255,255,255,.7);flex-shrink:0;overflow:hidden;position:relative}
 .mini-art img{width:100%;height:100%;object-fit:cover;position:absolute;inset:0}
 .mini-info{flex:1;min-width:0}
@@ -1296,6 +1298,25 @@ function stopPreview(){
   window._previewPlaying = false;
 }
 
+// Pause / resume the current preview without re-shuffling. Disabled
+// (button shows but does nothing) until the user has shuffled at
+// least once, since there's no audio to control yet.
+function togglePreviewPlayback(e){
+  if(e){ e.preventDefault(); e.stopPropagation(); }
+  if(!_previewAudio || !_previewAudio.src) return;
+  buzz(HAPTIC_SET);
+  if(_previewAudio.paused){
+    const p = _previewAudio.play();
+    window._previewPlaying = true;
+    if(p && p.catch) p.catch(()=>{ window._previewPlaying = false; render(); });
+    render();
+  } else {
+    _previewAudio.pause();
+    window._previewPlaying = false;
+    render();
+  }
+}
+
 async function shuffleAndPreviewSong(e){
   if(e){ e.preventDefault(); e.stopPropagation(); }
   buzz(HAPTIC_SET);
@@ -1524,10 +1545,48 @@ function isExBoosted(catId, exId){
 }
 function hasAiPrefs(){
   if(!S || !S.aiPrefs) return false;
-  const cats = S.aiPrefs.categories;
-  const adds = S.aiPrefs.addedExercises;
+  const cats  = S.aiPrefs.categories;
+  const adds  = S.aiPrefs.addedExercises;
+  const songs = S.aiPrefs.addedSongs;
   return !!((cats && Object.keys(cats).length > 0) ||
-            (adds && Object.keys(adds).length > 0));
+            (adds && Object.keys(adds).length > 0) ||
+            (Array.isArray(songs) && songs.length > 0));
+}
+
+// Merge AI-added songs into the SONGS array. Idempotent — skips
+// tracks already present (case-insensitive name+artist match).
+// Songs are mutated into the existing const SONGS array in place
+// so getRandomSong() picks from the bigger pool naturally.
+function applyAddedSongs(){
+  if(!S || !S.aiPrefs || !Array.isArray(S.aiPrefs.addedSongs)) return;
+  if(typeof SONGS === 'undefined') return;
+  const existing = new Set();
+  for(const s of SONGS) existing.add(((s.n||'') + '|' + (s.a||'')).toLowerCase());
+  for(const s of S.aiPrefs.addedSongs){
+    const key = ((s.n||'') + '|' + (s.a||'')).toLowerCase();
+    if(existing.has(key)) continue;
+    SONGS.push({ n: s.n, a: s.a, g: s.g, i: s.i, _aiAdded: true });
+    existing.add(key);
+  }
+}
+
+// Tear out AI-added songs from the runtime SONGS array.
+function unapplyAddedSongs(addedList){
+  if(!Array.isArray(addedList) || typeof SONGS === 'undefined') return;
+  const removeKeys = new Set();
+  for(const s of addedList) removeKeys.add(((s.n||'') + '|' + (s.a||'')).toLowerCase());
+  for(let i = SONGS.length - 1; i >= 0; i--){
+    const k = ((SONGS[i].n||'') + '|' + (SONGS[i].a||'')).toLowerCase();
+    if(removeKeys.has(k)) SONGS.splice(i, 1);
+  }
+  // If the currently-displayed song is one we just removed, pick a fresh one
+  if(window._currentSong){
+    const cur = ((window._currentSong.n||'') + '|' + (window._currentSong.a||'')).toLowerCase();
+    if(removeKeys.has(cur)){
+      window._currentSong = getRandomSong();
+      stopPreview();
+    }
+  }
 }
 
 // Merge user-added exercises (proposed by the coach, accepted by the
@@ -2509,6 +2568,7 @@ function render(){
   if(!window._currentSong) window._currentSong=getRandomSong();
   const song=window._currentSong;
   const playing = !!window._previewPlaying;
+  const hasAudio = !!_previewAudio;
   document.getElementById('mini-player').innerHTML=`
     <div class="mini-p">
       <button class="mp-main ${playing?'playing':''}" onclick="shuffleAndPreviewSong(event)" title="Tap to shuffle + preview">
@@ -2519,6 +2579,7 @@ function render(){
         </div>
         <div class="mini-tag">${playing?'▶':'🔀'}</div>
       </button>
+      <button class="mp-pause ${playing?'playing':''}" onclick="togglePreviewPlayback(event)" title="${playing?'Pause preview':'Resume preview'}" ${hasAudio?'':'disabled'}>${playing?'⏸':'▶'}</button>
       <button class="mp-am" onclick="openInAppleMusicSong(event)" title="Open in Apple Music">🎵</button>
     </div>`;
   renderMiniPlayer(document.getElementById('mp-art'),song);
@@ -3445,6 +3506,17 @@ function buildCoachContext(){
     }
   }
 
+  // 6. MUSIC CATALOG ----------------------------------------------
+  // So the coach can extend the playlist on request without proposing
+  // duplicates. Compact one-liners.
+  if(typeof SONGS !== 'undefined' && SONGS.length){
+    lines.push('\n=== MUSIC CATALOG (songs already in shuffle pool) ===');
+    for(const s of SONGS){
+      const tag = s._aiAdded ? ' 🤖added' : '';
+      lines.push('- ' + s.n + ' — ' + s.a + tag);
+    }
+  }
+
   return lines.join('\n');
 }
 
@@ -3520,17 +3592,79 @@ function parseCoachProposal(text){
     }
   }
 
-  const hasCats = Object.keys(cleanCats).length > 0;
-  const hasAdds = Object.keys(cleanAdds).length > 0;
-  if(!hasCats && !hasAdds) return { visibleText: text.replace(m[0], '').trim(), proposal: null };
+  // Validate "add_songs": new tracks for the music catalog. Cap at
+  // 10 per proposal to keep things sane and dedupe against existing
+  // SONGS plus anything already AI-added.
+  const cleanSongs = [];
+  if(parsed && Array.isArray(parsed.add_songs)){
+    const existingKeys = new Set();
+    if(typeof SONGS !== 'undefined'){
+      for(const s of SONGS) existingKeys.add(((s.n||'') + '|' + (s.a||'')).toLowerCase());
+    }
+    for(const raw of parsed.add_songs.slice(0, 10)){
+      const v = _validateAddedSong(raw, existingKeys);
+      if(v){ cleanSongs.push(v); existingKeys.add((v.n + '|' + v.a).toLowerCase()); }
+    }
+  }
+
+  const hasCats  = Object.keys(cleanCats).length > 0;
+  const hasAdds  = Object.keys(cleanAdds).length > 0;
+  const hasSongs = cleanSongs.length > 0;
+  if(!hasCats && !hasAdds && !hasSongs) return { visibleText: text.replace(m[0], '').trim(), proposal: null };
 
   const visibleText = text.replace(m[0], '').trim();
   const proposal = {
     summary: typeof parsed.summary === 'string' ? parsed.summary.slice(0, 200) : 'AI-proposed changes'
   };
-  if(hasCats) proposal.categories = cleanCats;
-  if(hasAdds) proposal.add_exercises = cleanAdds;
+  if(hasCats)  proposal.categories    = cleanCats;
+  if(hasAdds)  proposal.add_exercises = cleanAdds;
+  if(hasSongs) proposal.add_songs     = cleanSongs;
   return { visibleText, proposal };
+}
+
+// Curated palette + initials helper for AI-added songs. The hand-
+// curated SONGS entries pick gradient colors by hand; we generate
+// reasonable ones for AI additions so they look like they belong.
+const _SONG_PALETTES = [
+  '#e85d04,#dc2f02','#7b2cbf,#3c096c','#00b4d8,#0077b6',
+  '#f72585,#7209b7','#06d6a0,#118ab2','#ff6b6b,#c92a2a',
+  '#fb8500,#e85d04','#fca311,#14213d','#7209b7,#560bad',
+  '#d00000,#6a040f','#2ec4b6,#264653','#3a86ff,#8338ec',
+  '#48cae4,#0077b6','#9d4edd,#240046','#ef476f,#ffd166'
+];
+function _gradientForSong(name, artist){
+  let h = 0;
+  const s = (name||'') + (artist||'');
+  for(let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;
+  return _SONG_PALETTES[Math.abs(h) % _SONG_PALETTES.length];
+}
+function _initialsForArtist(artist){
+  if(!artist) return '?';
+  // Drop punctuation, parentheticals, "feat." etc.
+  const cleaned = String(artist).replace(/\(.*?\)/g, ' ').replace(/feat\..*$/i, ' ');
+  const words = cleaned.split(/[\s&,/]+/).filter(Boolean);
+  if(words.length >= 2) return (words[0][0] + words[1][0]).toUpperCase();
+  if(words[0])         return words[0].slice(0, 2).toUpperCase();
+  return '?';
+}
+
+// Validator for AI-proposed songs. Returns a clean SONGS-shape object
+// or null. Dedupes case-insensitively against existing tracks.
+function _validateAddedSong(raw, existingKeys){
+  if(!raw || typeof raw !== 'object') return null;
+  const name   = (typeof raw.name   === 'string') ? raw.name.trim()   : '';
+  const artist = (typeof raw.artist === 'string') ? raw.artist.trim() : '';
+  if(name.length < 1 || name.length > 80) return null;
+  if(artist.length < 1 || artist.length > 80) return null;
+  const key = (name + '|' + artist).toLowerCase();
+  if(existingKeys && existingKeys.has(key)) return null;
+  return {
+    n: name,
+    a: artist,
+    g: _gradientForSong(name, artist),
+    i: _initialsForArtist(artist),
+    _aiAdded: true
+  };
 }
 
 // Strict validator for AI-proposed new exercises. Returns a clean
@@ -3590,6 +3724,11 @@ function _proposalDiffText(proposal){
       }
     }
   }
+  if(Array.isArray(proposal.add_songs)){
+    for(const s of proposal.add_songs){
+      lines.push('+ Music: ' + s.n + ' — ' + s.a);
+    }
+  }
   return lines.join('\n');
 }
 
@@ -3599,14 +3738,16 @@ function _proposalDiffText(proposal){
 function applyCoachProposal(historyIdx){
   const msg = _coachHistory[historyIdx];
   if(!msg || !msg.proposal) return;
-  // Preserve previously-added exercises across applies (latest summary
-  // and category overrides win, but added exercises accumulate).
-  const prevAdds = (S.aiPrefs && S.aiPrefs.addedExercises) || {};
+  // Preserve previously-added exercises and songs across applies
+  // (latest summary + category overrides win, but additions accumulate).
+  const prevAdds  = (S.aiPrefs && S.aiPrefs.addedExercises) || {};
+  const prevSongs = (S.aiPrefs && Array.isArray(S.aiPrefs.addedSongs)) ? S.aiPrefs.addedSongs.slice() : [];
   S.aiPrefs = {
-    appliedAt:        new Date().toISOString(),
-    summary:          msg.proposal.summary,
-    categories:       msg.proposal.categories || {},
-    addedExercises:   prevAdds
+    appliedAt:      new Date().toISOString(),
+    summary:        msg.proposal.summary,
+    categories:     msg.proposal.categories || {},
+    addedExercises: prevAdds,
+    addedSongs:     prevSongs
   };
   // Merge any newly-proposed additions into addedExercises
   if(msg.proposal.add_exercises){
@@ -3622,6 +3763,18 @@ function applyCoachProposal(historyIdx){
     }
     // Push them into the runtime catalog so the picker shows them now
     applyAddedExercises();
+  }
+  // Merge any newly-proposed songs into addedSongs
+  if(Array.isArray(msg.proposal.add_songs) && msg.proposal.add_songs.length){
+    const existingKeys = new Set(S.aiPrefs.addedSongs.map(s => ((s.n||'') + '|' + (s.a||'')).toLowerCase()));
+    for(const s of msg.proposal.add_songs){
+      const key = ((s.n||'') + '|' + (s.a||'')).toLowerCase();
+      if(!existingKeys.has(key)){
+        S.aiPrefs.addedSongs.push(s);
+        existingKeys.add(key);
+      }
+    }
+    applyAddedSongs();
   }
   // Wipe explicit picks for any touched category so new defaults
   // (respecting overrides + including new exercises) repopulate.
@@ -3651,10 +3804,13 @@ function dismissCoachProposal(historyIdx){
 function revertCoachPrefs(){
   if(!hasAiPrefs()) return;
   if(!confirm('Revert AI Coach changes and go back to defaults?')) return;
-  // Tear out any AI-added exercises from the runtime catalog before
-  // dropping aiPrefs, otherwise the picker keeps showing them.
+  // Tear out any AI-added exercises and songs from the runtime
+  // catalog before dropping aiPrefs, otherwise pickers keep showing them.
   if(S.aiPrefs && S.aiPrefs.addedExercises){
     unapplyAddedExercises(S.aiPrefs.addedExercises);
+  }
+  if(S.aiPrefs && Array.isArray(S.aiPrefs.addedSongs)){
+    unapplyAddedSongs(S.aiPrefs.addedSongs);
   }
   delete S.aiPrefs;
   if(S.selectedEx) S.selectedEx = {};
@@ -3779,8 +3935,9 @@ async function askCoach(question){
       'so far and build on previous answers when the user follows up.\n\n' +
       'WHEN THE USER ASKS TO CHANGE THEIR PLAN — e.g. "focus more on arms", ' +
       '"add bicep work", "drop chest accessory", "swap pulldowns for rows", ' +
-      '"add a quad-specific exercise" — give a brief justification AND append ' +
-      'a JSON proposal at the end of your response wrapped in <changes> tags. ' +
+      '"add a quad-specific exercise", "add more melodic songs", "expand the ' +
+      'workout playlist" — give a brief justification AND append a JSON ' +
+      'proposal at the end of your response wrapped in <changes> tags. ' +
       'Schema:\n' +
       '<changes>\n' +
       '{\n' +
@@ -3794,16 +3951,25 @@ async function askCoach(question){
       '        "rep": "<rep range like 8 to 12>", "sw": <starting weight number>, \n' +
       '        "unit": "<lb|lb DB|lb cable|BW|kg>", "equip": "<barbell|dumbbell|cable|machine|bodyweight>" }\n' +
       '    ]\n' +
-      '  }\n' +
+      '  },\n' +
+      '  "add_songs": [\n' +
+      '    { "name": "<track title>", "artist": "<artist>" }\n' +
+      '  ]\n' +
       '}\n' +
       '</changes>\n' +
       'Use category IDs and exercise IDs EXACTLY as they appear in PROGRAM. ' +
-      'Only include fields you want to change. Both top-level keys ' +
-      '(categories, add_exercises) are optional — include only what you need. ' +
+      'Only include fields you want to change. All three top-level keys ' +
+      '(categories, add_exercises, add_songs) are optional — include only ' +
+      'what you need. ' +
       'Boost = exercises to highlight and prefer in selection. ' +
       'add_exercises = NEW exercises to add to the catalog (use this for ' +
       'requests like "add quad-specific exercises" — propose real, safe, ' +
       'gym-standard movements with conservative starting weights). ' +
+      'add_songs = NEW gym tracks for the music shuffle pool (use this when ' +
+      'the user describes a vibe like "more melodic", "less dubstep", "more ' +
+      'hype", "extend the playlist"). Pick mainstream tracks Deezer indexes ' +
+      '(electronic / house / EDM / hip-hop). Limit 8 per proposal. Avoid ' +
+      'tracks already in MUSIC CATALOG below. ' +
       'Change at most 3 categories per proposal. For pure questions (no plan ' +
       'change requested), respond normally with no <changes> block.\n\n' +
       'CURRENT TRAINING DATA:\n' + buildCoachContext();
@@ -3896,9 +4062,11 @@ function coachInputKey(e){
 // INIT
 // ══════════════════════════════════════════════════════════════════════
 load();
-// Reapply AI-added exercises into the runtime catalog before first render
-// so they show up in pickers immediately on reload.
+// Reapply AI-added exercises and songs into the runtime state before
+// first render so they show up in pickers + the song shuffle pool
+// immediately on reload.
 applyAddedExercises();
+applyAddedSongs();
 render();
 // Re-acquire wake lock if the user reopens the app mid-session.
 // Note: on some iOS versions this first call may fail silently because
