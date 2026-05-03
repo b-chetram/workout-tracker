@@ -363,16 +363,16 @@ input[type=number]::-webkit-inner-spin-button{-webkit-appearance:none}
 <div class="overlay hidden" id="coach-overlay" onclick="handleOverlayClick(event,'coach')">
   <div class="sheet">
     <div class="sheet-title">AI Coach 🤖</div>
-    <div class="sheet-sub">Powered by Google Gemini · Free</div>
+    <div class="sheet-sub">Powered by Llama 3.3 70B via Groq · Free</div>
 
     <!-- API KEY ENTRY (shown when no key saved) -->
     <div id="coach-key-row" style="display:none">
       <div style="font-size:13px;color:rgba(255,255,255,.65);line-height:1.5;margin:14px 0 16px">
         Get a free API key at
-        <a class="coach-link" href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener">aistudio.google.com/app/apikey</a>.
-        It's stored only on your phone — never sent anywhere except Google.
+        <a class="coach-link" href="https://console.groq.com/keys" target="_blank" rel="noopener">console.groq.com/keys</a>.
+        It's stored only on your phone — never sent anywhere except Groq.
       </div>
-      <input id="coach-key-input" class="coach-key" type="password" placeholder="Paste your AIza... key" autocomplete="off" spellcheck="false">
+      <input id="coach-key-input" class="coach-key" type="password" placeholder="Paste your gsk_... key" autocomplete="off" spellcheck="false">
       <button class="sheet-confirm" style="background:#5ec46a;color:#000;margin-top:12px" onclick="saveCoachKey()">Save Key</button>
     </div>
 
@@ -1325,7 +1325,7 @@ const KEY='wt_v6';
 // stays cheap. Existing user data is preserved.
 (function migrateLegacyKeys(){
   try{
-    const moves = [['cbum_v6','wt_v6'], ['cbum_rest_sec','wt_rest_sec']];
+    const moves = [['cbum_v6','wt_v6'], ['cbum_rest_sec','wt_rest_sec'], ['wt_gemini_key','wt_groq_key']];
     for(const [oldK, newK] of moves){
       if(localStorage.getItem(newK) !== null) continue;
       const v = localStorage.getItem(oldK);
@@ -3022,19 +3022,19 @@ document.addEventListener('click', function(e){
 });
 
 // ══════════════════════════════════════════════════════════════════════
-// AI COACH (Google Gemini)
+// AI COACH (Llama 3.3 70B via Groq)
 // ══════════════════════════════════════════════════════════════════════
-// Free with a Gemini API key the user gets at aistudio.google.com.
+// Free with a Groq API key from console.groq.com/keys (no credit card).
 // Key lives only in localStorage on this device. The coach reads the
-// real DB / S state, summarizes recent training, and asks Gemini for
+// real DB / S state, summarizes recent training, and asks Llama for
 // specific weight + exercise advice.
-const COACH_KEY_LS = 'wt_gemini_key';
-const COACH_MODEL  = 'gemini-2.5-flash';
-// Embedded fallback key. The owner accepts the trade-off: GitHub may
-// flag this, Google may auto-disable it, bots may consume the free
-// quota. Override at runtime by saving a key in the in-app settings —
-// the localStorage value always wins.
-const COACH_EMBEDDED_KEY = 'AIzaSyBDuxTOdwZjHOV1IO1bWkZdv_MW_xPJ84E';
+const COACH_KEY_LS = 'wt_groq_key';
+const COACH_MODEL  = 'llama-3.3-70b-versatile';
+// Embedded fallback key. The owner accepts the trade-off: this key
+// lives in a public repo and the Groq free quota (30 req/min, 14k
+// req/day) could be drained by scrapers. localStorage value wins if
+// the user ever wants to override at runtime.
+const COACH_EMBEDDED_KEY = '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';
 
 function getCoachKey(){
   try{
@@ -3074,7 +3074,7 @@ function resetCoachKey(){
 }
 
 // Build a compact text summary of the lifter's actual training data
-// so Gemini can give specific advice. Last ~5 sessions per exercise.
+// so the model can give specific advice. Last ~5 sessions per exercise.
 function buildCoachContext(){
   const lines = [];
   const today = new Date().toISOString().slice(0,10);
@@ -3134,15 +3134,17 @@ async function askCoach(question){
       'TRAINING DATA:\n' + context + '\n\n' +
       'USER QUESTION:\n' + question;
 
-    const url = 'https://generativelanguage.googleapis.com/v1beta/models/' +
-                encodeURIComponent(COACH_MODEL) +
-                ':generateContent?key=' + encodeURIComponent(key);
-    const resp = await fetch(url, {
+    const resp = await fetch('https://api.groq.com/openai/v1/chat/completions', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer ' + key
+      },
       body: JSON.stringify({
-        contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: { temperature: 0.6, maxOutputTokens: 600 }
+        model: COACH_MODEL,
+        messages: [{ role: 'user', content: prompt }],
+        temperature: 0.6,
+        max_tokens: 600
       })
     });
 
@@ -3154,11 +3156,11 @@ async function askCoach(question){
       return;
     }
     const data = await resp.json();
-    const text = (((data || {}).candidates || [])[0] || {}).content
-                  ? data.candidates[0].content.parts.map(p => p.text || '').join('').trim()
+    const text = (((data || {}).choices || [])[0] || {}).message
+                  ? (data.choices[0].message.content || '').trim()
                   : '';
     if(!text){
-      responseEl.innerHTML = '<div class="coach-err">No response. The model may have refused or returned empty content.</div>';
+      responseEl.innerHTML = '<div class="coach-err">No response. The model returned empty content.</div>';
       return;
     }
     responseEl.innerHTML = '<div class="coach-resp">' + _esc(text) + '</div>';
