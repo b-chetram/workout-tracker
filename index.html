@@ -1433,8 +1433,63 @@ function isExBoosted(catId, exId){
   return !!(o && Array.isArray(o.boost) && o.boost.indexOf(exId) >= 0);
 }
 function hasAiPrefs(){
-  return !!(S && S.aiPrefs && S.aiPrefs.categories &&
-            Object.keys(S.aiPrefs.categories).length > 0);
+  if(!S || !S.aiPrefs) return false;
+  const cats = S.aiPrefs.categories;
+  const adds = S.aiPrefs.addedExercises;
+  return !!((cats && Object.keys(cats).length > 0) ||
+            (adds && Object.keys(adds).length > 0));
+}
+
+// Merge user-added exercises (proposed by the coach, accepted by the
+// user) into the runtime catalog. Idempotent — skips IDs already
+// present, so safe to call multiple times (after load, after apply).
+function applyAddedExercises(){
+  if(!S || !S.aiPrefs || !S.aiPrefs.addedExercises) return;
+  const adds = S.aiPrefs.addedExercises;
+  for(const catId of Object.keys(adds)){
+    const cat = _findCatById(catId);
+    if(!cat || !Array.isArray(cat.exercises)) continue;
+    const existingIds = new Set(cat.exercises.map(e => e.id));
+    for(const ex of adds[catId]){
+      if(existingIds.has(ex.id)) continue;
+      // Tag with the same _cat* metadata buildDay assigns
+      ex._catId = cat.id;
+      ex._catName = cat.name;
+      ex._catMin = cat.min;
+      ex._catMax = cat.max;
+      ex._isMainCat = !!cat.isMain;
+      ex._aiAdded = true;
+      cat.exercises.push(ex);
+      existingIds.add(ex.id);
+      // Also push into the flat day.exercises that findEx walks
+      for(const day of DAYS){
+        if(day && Array.isArray(day.categories) && day.categories.indexOf(cat) >= 0){
+          if(!Array.isArray(day.exercises)) day.exercises = [];
+          day.exercises.push(ex);
+        }
+      }
+    }
+  }
+}
+
+// Tear out previously-added exercises from the runtime catalog —
+// the inverse of applyAddedExercises. Used by Revert.
+function unapplyAddedExercises(addedMap){
+  if(!addedMap) return;
+  for(const catId of Object.keys(addedMap)){
+    const cat = _findCatById(catId);
+    if(!cat) continue;
+    const removeIds = new Set(addedMap[catId].map(e => e.id));
+    if(Array.isArray(cat.exercises)){
+      cat.exercises = cat.exercises.filter(e => !removeIds.has(e.id));
+    }
+    for(const day of DAYS){
+      if(day && Array.isArray(day.categories) && day.categories.indexOf(cat) >= 0
+         && Array.isArray(day.exercises)){
+        day.exercises = day.exercises.filter(e => !removeIds.has(e.id));
+      }
+    }
+  }
 }
 function getExNativeDay(id){
   for(const d of DAYS)if((d.exercises||[]).some(e=>e.id===id))return d.id;
@@ -3188,12 +3243,15 @@ function buildCoachContext(){
       const constraint = lim.min === lim.max
         ? 'pick ' + lim.min + ' of ' + cat.exercises.length
         : 'pick ' + lim.min + '-' + lim.max + ' of ' + cat.exercises.length;
-      lines.push('  [' + cat.name + ' / id:' + cat.id + ']' + main + ' — ' + constraint + baseHint + ':');
+      // ID first so the model uses the bare snake_case key in JSON,
+      // not the human-readable name.
+      lines.push('  ' + cat.id + ' = ' + cat.name + main + ' — ' + constraint + baseHint + ':');
       for(const ex of cat.exercises){
         const sw = (ex.sw != null) ? (ex.sw + (ex.unit ? ex.unit : '')) : 'BW';
         const equip = ex.equip ? ' (' + ex.equip + ')' : '';
         const boosted = isExBoosted(cat.id, ex.id) ? ' 🤖boosted' : '';
-        lines.push('    - ' + ex.id + ' = ' + ex.name + ' | ' + ex.sets + '×' + ex.rep + ' | start: ' + sw + equip + boosted);
+        const aiAdded = ex._aiAdded ? ' 🤖added' : '';
+        lines.push('    - ' + ex.id + ' = ' + ex.name + ' | ' + ex.sets + '×' + ex.rep + ' | start: ' + sw + equip + boosted + aiAdded);
       }
     }
   }
@@ -3342,40 +3400,100 @@ function parseCoachProposal(text){
       if(Object.keys(out).length > 0) cleanCats[catId] = out;
     }
   }
-  if(Object.keys(cleanCats).length === 0) return { visibleText: text.replace(m[0], '').trim(), proposal: null };
+  // Validate "add_exercises": new exercises the AI wants added to a
+  // category. Strict — every field is type-checked and clamped, and
+  // we silently drop anything that doesn't pass. ID collision is
+  // checked globally (findEx walks all days, so duplicate IDs in
+  // *any* category would cause lookups to return the wrong exercise).
+  const cleanAdds = {};
+  const allIds = new Set();
+  for(const d of (typeof DAYS !== 'undefined' ? DAYS : [])){
+    for(const e of (d.exercises || [])) allIds.add(e.id);
+  }
+  if(parsed && parsed.add_exercises && typeof parsed.add_exercises === 'object'){
+    for(const catId of Object.keys(parsed.add_exercises)){
+      const cat = _findCatById(catId);
+      if(!cat) continue;
+      const arr = parsed.add_exercises[catId];
+      if(!Array.isArray(arr)) continue;
+      const valid = [];
+      for(const raw of arr){
+        const v = _validateAddedExercise(raw, allIds);
+        if(v){ valid.push(v); allIds.add(v.id); }
+      }
+      if(valid.length) cleanAdds[catId] = valid;
+    }
+  }
+
+  const hasCats = Object.keys(cleanCats).length > 0;
+  const hasAdds = Object.keys(cleanAdds).length > 0;
+  if(!hasCats && !hasAdds) return { visibleText: text.replace(m[0], '').trim(), proposal: null };
 
   const visibleText = text.replace(m[0], '').trim();
+  const proposal = {
+    summary: typeof parsed.summary === 'string' ? parsed.summary.slice(0, 200) : 'AI-proposed changes'
+  };
+  if(hasCats) proposal.categories = cleanCats;
+  if(hasAdds) proposal.add_exercises = cleanAdds;
+  return { visibleText, proposal };
+}
+
+// Strict validator for AI-proposed new exercises. Returns a clean
+// exercise object compatible with the existing catalog shape, or
+// null if any required field is invalid.
+function _validateAddedExercise(raw, existingIds){
+  if(!raw || typeof raw !== 'object') return null;
+  if(typeof raw.id !== 'string' || !/^[a-z0-9_]{2,30}$/i.test(raw.id)) return null;
+  if(existingIds && existingIds.has(raw.id)) return null;
+  if(typeof raw.name !== 'string' || raw.name.length < 2 || raw.name.length > 60) return null;
+  const sets = parseInt(raw.sets, 10);
+  if(!Number.isInteger(sets) || sets < 1 || sets > 10) return null;
+  const rep = (typeof raw.rep === 'string' && raw.rep.length <= 30) ? raw.rep : '8 to 12';
+  let sw = (raw.sw == null) ? 0 : Number(raw.sw);
+  if(!Number.isFinite(sw) || sw < 0 || sw > 500) sw = 0;
+  const unit = (typeof raw.unit === 'string' && raw.unit.length <= 20) ? raw.unit : 'lb';
+  const equip = (typeof raw.equip === 'string' && raw.equip.length <= 20) ? raw.equip : 'other';
+  const prog = (typeof raw.prog === 'string' && raw.prog.length <= 200) ? raw.prog : 'Hit top of rep range 2 sessions in a row → add weight.';
   return {
-    visibleText,
-    proposal: {
-      summary: typeof parsed.summary === 'string' ? parsed.summary.slice(0, 200) : 'AI-proposed changes',
-      categories: cleanCats
-    }
+    id: raw.id, name: raw.name.slice(0, 60),
+    sets: sets, rep: rep, sw: sw, unit: unit, equip: equip, prog: prog
   };
 }
 
 // Render a textual diff of what'd change vs current state
 function _proposalDiffText(proposal){
   const lines = [];
-  for(const catId of Object.keys(proposal.categories)){
-    const cat = _findCatById(catId);
-    if(!cat) continue;
-    const cur = getCatLimits(cat);
-    const o = proposal.categories[catId];
-    const newMin = (o.min != null) ? o.min : cur.min;
-    const newMax = (o.max != null) ? o.max : cur.max;
-    let limPart = '';
-    if(newMin !== cur.min || newMax !== cur.max){
-      limPart = ' picks ' + cur.min + (cur.max>cur.min?'-'+cur.max:'') +
-                ' → ' + newMin + (newMax>newMin?'-'+newMax:'');
+  if(proposal.categories){
+    for(const catId of Object.keys(proposal.categories)){
+      const cat = _findCatById(catId);
+      if(!cat) continue;
+      const cur = getCatLimits(cat);
+      const o = proposal.categories[catId];
+      const newMin = (o.min != null) ? o.min : cur.min;
+      const newMax = (o.max != null) ? o.max : cur.max;
+      let limPart = '';
+      if(newMin !== cur.min || newMax !== cur.max){
+        limPart = ' picks ' + cur.min + (cur.max>cur.min?'-'+cur.max:'') +
+                  ' → ' + newMin + (newMax>newMin?'-'+newMax:'');
+      }
+      const boostPart = (o.boost && o.boost.length)
+        ? ' boost: ' + o.boost.map(id => {
+            const ex = (cat.exercises || []).find(e => e.id === id);
+            return ex ? ex.name : id;
+          }).join(', ')
+        : '';
+      lines.push('• ' + cat.name + limPart + boostPart);
     }
-    const boostPart = (o.boost && o.boost.length)
-      ? ' boost: ' + o.boost.map(id => {
-          const ex = (cat.exercises || []).find(e => e.id === id);
-          return ex ? ex.name : id;
-        }).join(', ')
-      : '';
-    lines.push('• ' + cat.name + limPart + boostPart);
+  }
+  if(proposal.add_exercises){
+    for(const catId of Object.keys(proposal.add_exercises)){
+      const cat = _findCatById(catId);
+      const catName = cat ? cat.name : catId;
+      for(const ex of proposal.add_exercises[catId]){
+        const sw = (ex.sw != null && ex.sw > 0) ? (ex.sw + (ex.unit || '')) : 'BW';
+        lines.push('+ ' + catName + ': add ' + ex.name + ' (' + ex.sets + '×' + ex.rep + ', start ' + sw + ')');
+      }
+    }
   }
   return lines.join('\n');
 }
@@ -3386,19 +3504,38 @@ function _proposalDiffText(proposal){
 function applyCoachProposal(historyIdx){
   const msg = _coachHistory[historyIdx];
   if(!msg || !msg.proposal) return;
+  // Preserve previously-added exercises across applies (latest summary
+  // and category overrides win, but added exercises accumulate).
+  const prevAdds = (S.aiPrefs && S.aiPrefs.addedExercises) || {};
   S.aiPrefs = {
-    appliedAt: new Date().toISOString(),
-    summary:   msg.proposal.summary,
-    categories: msg.proposal.categories
+    appliedAt:        new Date().toISOString(),
+    summary:          msg.proposal.summary,
+    categories:       msg.proposal.categories || {},
+    addedExercises:   prevAdds
   };
-  // Wipe the user-explicit picks for affected categories so the new
-  // limits take effect (defaults will repopulate respecting overrides).
-  if(S.selectedEx){
-    for(const catId of Object.keys(msg.proposal.categories)){
-      delete S.selectedEx[catId];
+  // Merge any newly-proposed additions into addedExercises
+  if(msg.proposal.add_exercises){
+    for(const catId of Object.keys(msg.proposal.add_exercises)){
+      if(!S.aiPrefs.addedExercises[catId]) S.aiPrefs.addedExercises[catId] = [];
+      const existing = new Set(S.aiPrefs.addedExercises[catId].map(e => e.id));
+      for(const ex of msg.proposal.add_exercises[catId]){
+        if(!existing.has(ex.id)){
+          S.aiPrefs.addedExercises[catId].push(ex);
+          existing.add(ex.id);
+        }
+      }
     }
+    // Push them into the runtime catalog so the picker shows them now
+    applyAddedExercises();
   }
-  // Mark this message's proposal as applied so the apply card hides
+  // Wipe explicit picks for any touched category so new defaults
+  // (respecting overrides + including new exercises) repopulate.
+  if(S.selectedEx){
+    const touched = new Set();
+    Object.keys(msg.proposal.categories || {}).forEach(c => touched.add(c));
+    Object.keys(msg.proposal.add_exercises || {}).forEach(c => touched.add(c));
+    for(const catId of touched) delete S.selectedEx[catId];
+  }
   msg.proposalApplied = true;
   saveCoachHistory();
   save();
@@ -3419,8 +3556,12 @@ function dismissCoachProposal(historyIdx){
 function revertCoachPrefs(){
   if(!hasAiPrefs()) return;
   if(!confirm('Revert AI Coach changes and go back to defaults?')) return;
+  // Tear out any AI-added exercises from the runtime catalog before
+  // dropping aiPrefs, otherwise the picker keeps showing them.
+  if(S.aiPrefs && S.aiPrefs.addedExercises){
+    unapplyAddedExercises(S.aiPrefs.addedExercises);
+  }
   delete S.aiPrefs;
-  // Clear user picks too so defaults repopulate against the reverted limits
   if(S.selectedEx) S.selectedEx = {};
   save();
   renderCoachPrefsBanner();
@@ -3542,22 +3683,34 @@ async function askCoach(question){
       'recommendation. No fluff, no disclaimers. Remember the conversation ' +
       'so far and build on previous answers when the user follows up.\n\n' +
       'WHEN THE USER ASKS TO CHANGE THEIR PLAN — e.g. "focus more on arms", ' +
-      '"add bicep work", "drop chest accessory", "swap pulldowns for rows" ' +
-      '— give a brief justification AND append a JSON proposal at the end ' +
-      'of your response wrapped in <changes> tags. Schema:\n' +
+      '"add bicep work", "drop chest accessory", "swap pulldowns for rows", ' +
+      '"add a quad-specific exercise" — give a brief justification AND append ' +
+      'a JSON proposal at the end of your response wrapped in <changes> tags. ' +
+      'Schema:\n' +
       '<changes>\n' +
       '{\n' +
       '  "summary": "<one-sentence description of changes>",\n' +
       '  "categories": {\n' +
       '    "<category_id>": { "min": <int?>, "max": <int?>, "boost": [<exercise_ids>] }\n' +
+      '  },\n' +
+      '  "add_exercises": {\n' +
+      '    "<category_id>": [\n' +
+      '      { "id": "<short_snake_case_id>", "name": "<display name>", "sets": <int>,\n' +
+      '        "rep": "<rep range like 8 to 12>", "sw": <starting weight number>, \n' +
+      '        "unit": "<lb|lb DB|lb cable|BW|kg>", "equip": "<barbell|dumbbell|cable|machine|bodyweight>" }\n' +
+      '    ]\n' +
       '  }\n' +
       '}\n' +
       '</changes>\n' +
       'Use category IDs and exercise IDs EXACTLY as they appear in PROGRAM. ' +
-      'Only include fields you want to change. Boost = exercises to highlight ' +
-      'and prefer in selection. Change at most 3 categories per proposal. ' +
-      'For pure questions (no plan change requested), respond normally with ' +
-      'no <changes> block.\n\n' +
+      'Only include fields you want to change. Both top-level keys ' +
+      '(categories, add_exercises) are optional — include only what you need. ' +
+      'Boost = exercises to highlight and prefer in selection. ' +
+      'add_exercises = NEW exercises to add to the catalog (use this for ' +
+      'requests like "add quad-specific exercises" — propose real, safe, ' +
+      'gym-standard movements with conservative starting weights). ' +
+      'Change at most 3 categories per proposal. For pure questions (no plan ' +
+      'change requested), respond normally with no <changes> block.\n\n' +
       'CURRENT TRAINING DATA:\n' + buildCoachContext();
 
     // Strip our internal fields (proposal, proposalApplied, etc.) before
@@ -3647,7 +3800,11 @@ function coachInputKey(e){
 // ══════════════════════════════════════════════════════════════════════
 // INIT
 // ══════════════════════════════════════════════════════════════════════
-load();render();
+load();
+// Reapply AI-added exercises into the runtime catalog before first render
+// so they show up in pickers immediately on reload.
+applyAddedExercises();
+render();
 // Re-acquire wake lock if the user reopens the app mid-session.
 // Note: on some iOS versions this first call may fail silently because
 // it's not tied to a user gesture. The visibilitychange handler above
