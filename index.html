@@ -762,7 +762,9 @@ document.addEventListener('visibilitychange', () => {
 let _lpTimer   = null;
 let _lpFired   = false;
 let _lpEl      = null;
-const LONG_PRESS_MS = 420; // slightly faster than iOS's own long-press
+let _lpStartXY = null;
+const LONG_PRESS_MS  = 420; // slightly faster than iOS's own long-press
+const LP_MOVE_TOL_PX = 10;  // ignore finger jitter under this radius
 
 function _lpStart(e){
   const el = e.target.closest('.ex-name-press');
@@ -771,6 +773,8 @@ function _lpStart(e){
   if(!exId) return;
   _lpFired = false;
   _lpEl    = el;
+  const pt = (e.touches && e.touches[0]) || e;
+  _lpStartXY = { x: pt.clientX, y: pt.clientY };
   el.classList.add('pressing');
   _lpTimer = setTimeout(() => {
     _lpFired = true;
@@ -784,12 +788,23 @@ function _lpStart(e){
 function _lpEnd(){
   if(_lpTimer){ clearTimeout(_lpTimer); _lpTimer = null; }
   if(_lpEl){ _lpEl.classList.remove('pressing'); _lpEl = null; }
+  _lpStartXY = null;
+}
+
+// Cancel the long-press only if the finger has moved more than the
+// jitter tolerance — iOS fires touchmove for tiny fingertip motion
+// even when the user is trying to hold still.
+function _lpMove(e){
+  if(!_lpStartXY || !_lpTimer) return;
+  const pt = (e.touches && e.touches[0]) || e;
+  const dx = pt.clientX - _lpStartXY.x, dy = pt.clientY - _lpStartXY.y;
+  if(dx*dx + dy*dy > LP_MOVE_TOL_PX*LP_MOVE_TOL_PX) _lpEnd();
 }
 
 document.addEventListener('touchstart', _lpStart, { passive: true });
 document.addEventListener('touchend',   _lpEnd,   { passive: true });
 document.addEventListener('touchcancel',_lpEnd,   { passive: true });
-document.addEventListener('touchmove',  _lpEnd,   { passive: true });
+document.addEventListener('touchmove',  _lpMove,  { passive: true });
 // Mouse equivalents so it works in Safari devtools too
 document.addEventListener('mousedown',  _lpStart);
 document.addEventListener('mouseup',    _lpEnd);
@@ -810,9 +825,11 @@ document.addEventListener('click', (e) => {
   }
 }, true);
 
-// Haptic feedback. navigator.vibrate works on Android browsers and iOS
-// home-screen standalone PWAs. Silently no-ops if unsupported, so safe
-// to call from every event handler.
+// Haptic feedback.
+//   - navigator.vibrate handles Android browsers and Android PWAs.
+//   - On iOS Safari/PWA, navigator.vibrate is a no-op forever, but
+//     a Notification (granted permission, standalone PWA on 16.4+)
+//     triggers the system haptic. fireHapticNotification covers that.
 function buzz(pattern){
   try{ if(navigator.vibrate) navigator.vibrate(pattern); }catch(e){}
 }
@@ -822,41 +839,100 @@ const HAPTIC_PR     = [40,60,80];    // longer rise for a personal record
 const HAPTIC_REST   = [25,40,25];    // triple pulse when rest timer ends
 const HAPTIC_DONE   = [60,80,60,80,60]; // session complete fanfare
 
-// Audio cue using Web Audio API. No asset files. Lazy-init the context
-// because iOS Safari requires the first AudioContext creation to happen
-// inside a user gesture.
-let _audioCtx = null;
-function getAudio(){
-  if(_audioCtx) return _audioCtx;
+// Notification permission is requested at session start (inside a user
+// gesture, which iOS requires). fireHapticNotification fires a quick
+// system notification — on iOS standalone PWAs this triggers the
+// device haptic, which is the only reliable way to "vibrate" iPhone.
+let _notifPermAsked = false;
+function ensureNotifPermission(){
+  if(_notifPermAsked) return;
+  _notifPermAsked = true;
   try{
-    const Ctx = window.AudioContext || window.webkitAudioContext;
-    if(Ctx) _audioCtx = new Ctx();
+    if(typeof Notification === 'undefined') return;
+    if(Notification.permission === 'default') Notification.requestPermission();
   }catch(e){}
-  return _audioCtx;
 }
-// Play a short pleasant two-tone chime. Used for rest-timer completion.
+function fireHapticNotification(title, body){
+  try{
+    if(typeof Notification === 'undefined') return;
+    if(Notification.permission !== 'granted') return;
+    const n = new Notification(title, { body, silent: false, tag: 'cbum-rest' });
+    // Auto-close so notification center doesn't stack up between sets.
+    setTimeout(()=>{ try{ n.close(); }catch(e){} }, 4000);
+  }catch(e){}
+}
+
+// Audio cue. We use HTMLAudioElement (not Web Audio) because on iOS,
+// AudioContext gets suspended whenever another app (Apple Music,
+// Spotify) holds audio focus, leaving Web Audio chimes inaudible.
+// HTMLAudio mixes with background music using the page's ambient
+// audio session and stays audible.
+//
+// The WAV is synthesized once at startup so we don't ship asset files.
+let _chimeAudio    = null;
+let _chimeUnlocked = false;
+
+function _buildChimeBlobUrl(){
+  const sr = 44100;
+  const dur = 0.55;
+  const n = Math.floor(sr * dur);
+  const buf = new ArrayBuffer(44 + n*2);
+  const v = new DataView(buf);
+  const writeStr = (off, str)=>{ for(let i=0;i<str.length;i++) v.setUint8(off+i, str.charCodeAt(i)); };
+  writeStr(0, 'RIFF');         v.setUint32(4, 36 + n*2, true);
+  writeStr(8, 'WAVE');         writeStr(12, 'fmt ');
+  v.setUint32(16, 16, true);   v.setUint16(20, 1, true);   // PCM
+  v.setUint16(22, 1, true);    v.setUint32(24, sr, true);  // mono, sample rate
+  v.setUint32(28, sr * 2, true); v.setUint16(32, 2, true); // byte rate, block align
+  v.setUint16(34, 16, true);   writeStr(36, 'data');
+  v.setUint32(40, n*2, true);
+  // Two-tone chime A5 → E6 with exponential decay envelope.
+  for(let i=0; i<n; i++){
+    const t = i / sr;
+    const env = Math.exp(-t * 5);
+    const tone1 = Math.sin(2*Math.PI*880*t) * 0.55;
+    const tone2 = t >= 0.13 ? Math.sin(2*Math.PI*1320*(t-0.13)) * 0.7 : 0;
+    let s = (tone1 + tone2) * env;
+    if(s > 1) s = 1; if(s < -1) s = -1;
+    v.setInt16(44 + i*2, s * 32767, true);
+  }
+  return URL.createObjectURL(new Blob([buf], {type: 'audio/wav'}));
+}
+
+function getChimeAudio(){
+  if(_chimeAudio) return _chimeAudio;
+  try{
+    _chimeAudio = new Audio(_buildChimeBlobUrl());
+    _chimeAudio.preload = 'auto';
+    _chimeAudio.volume  = 1.0;
+  }catch(e){}
+  return _chimeAudio;
+}
+
+// iOS requires audio to be primed inside a user gesture before any
+// later programmatic play() will succeed. We attach a one-shot unlock
+// to the first touch/click anywhere on the page.
+function unlockAudio(){
+  if(_chimeUnlocked) return;
+  const a = getChimeAudio();
+  if(!a) return;
+  a.muted = true;
+  const p = a.play();
+  const finish = ()=>{ try{ a.pause(); a.currentTime = 0; }catch(e){} a.muted = false; _chimeUnlocked = true; };
+  if(p && p.then){ p.then(finish).catch(()=>{ a.muted = false; }); }
+  else { finish(); }
+}
+document.addEventListener('touchstart', unlockAudio, { passive: true });
+document.addEventListener('click',      unlockAudio);
+
 function playChime(){
-  const ctx = getAudio();
-  if(!ctx) return;
-  // iOS: resume if suspended (happens after long idle)
-  if(ctx.state === 'suspended'){ try{ ctx.resume(); }catch(e){} }
-  const now = ctx.currentTime;
-  [
-    {freq:880, at:0,     dur:0.18}, // A5
-    {freq:1320,at:0.12,  dur:0.22}, // E6
-  ].forEach(n=>{
-    const osc = ctx.createOscillator();
-    const gain = ctx.createGain();
-    osc.type = 'sine';
-    osc.frequency.value = n.freq;
-    gain.gain.value = 0;
-    gain.gain.setValueAtTime(0, now + n.at);
-    gain.gain.linearRampToValueAtTime(0.22, now + n.at + 0.02);
-    gain.gain.exponentialRampToValueAtTime(0.0001, now + n.at + n.dur);
-    osc.connect(gain).connect(ctx.destination);
-    osc.start(now + n.at);
-    osc.stop(now + n.at + n.dur + 0.05);
-  });
+  const a = getChimeAudio();
+  if(!a) return;
+  try{
+    a.currentTime = 0;
+    const p = a.play();
+    if(p && p.catch) p.catch(()=>{});
+  }catch(e){}
 }
 
 // Personal record detection. A set is a PR if its weight beats every
@@ -882,9 +958,11 @@ function isNewPR(exId, weight){
 // countdown and a progress fill. Plays a chime + buzz when it ends.
 const REST_DEFAULT_SEC = 90;       // sensible default for hypertrophy sets
 const REST_KEY = 'cbum_rest_sec';  // remember user preference
-let _restInterval = null;
-let _restEndsAt   = 0;
-let _restTotalMs  = 0;
+let _restInterval      = null;
+let _restExpireTimeout = null;
+let _restEndsAt        = 0;
+let _restTotalMs       = 0;
+let _restFired         = false;
 
 function getRestSec(){
   const n = parseInt(localStorage.getItem(REST_KEY)||'', 10);
@@ -898,14 +976,23 @@ function startRestTimer(seconds){
   const sec = seconds || getRestSec();
   _restTotalMs = sec * 1000;
   _restEndsAt  = Date.now() + _restTotalMs;
+  _restFired   = false;
   if(_restInterval) clearInterval(_restInterval);
+  if(_restExpireTimeout) clearTimeout(_restExpireTimeout);
   renderRestBar();
   _restInterval = setInterval(renderRestBar, 250);
+  // Schedule the cue at the precise expiration so it fires even if
+  // the polling interval gets throttled (tab background, screen off,
+  // music app in foreground). The visibilitychange handler is a
+  // second safety net.
+  _restExpireTimeout = setTimeout(fireRestComplete, _restTotalMs);
 }
 
 function cancelRestTimer(){
   if(_restInterval){ clearInterval(_restInterval); _restInterval = null; }
+  if(_restExpireTimeout){ clearTimeout(_restExpireTimeout); _restExpireTimeout = null; }
   _restEndsAt = 0;
+  _restFired  = false;
   renderRestBar();
 }
 
@@ -914,6 +1001,23 @@ function adjustRest(deltaSec){
   _restEndsAt += deltaSec * 1000;
   _restTotalMs += deltaSec * 1000;
   if(_restEndsAt - Date.now() < 1000) _restEndsAt = Date.now() + 1000;
+  if(_restExpireTimeout) clearTimeout(_restExpireTimeout);
+  _restExpireTimeout = setTimeout(fireRestComplete, Math.max(0, _restEndsAt - Date.now()));
+  renderRestBar();
+}
+
+// Single source of truth for the "rest is over" cues. Idempotent so
+// the precise setTimeout, the polling renderRestBar, and the
+// visibilitychange catch-up can all call it without double-firing.
+function fireRestComplete(){
+  if(_restFired || !_restEndsAt) return;
+  _restFired = true;
+  playChime();                      // audible chime, mixes with music
+  buzz(HAPTIC_REST);                // Android vibration
+  fireHapticNotification('Rest done', 'Time for your next set 💪'); // iOS haptic
+  if(_restInterval){ clearInterval(_restInterval); _restInterval = null; }
+  if(_restExpireTimeout){ clearTimeout(_restExpireTimeout); _restExpireTimeout = null; }
+  _restEndsAt = 0;
   renderRestBar();
 }
 
@@ -926,12 +1030,8 @@ function renderRestBar(){
   }
   const msLeft = _restEndsAt - Date.now();
   if(msLeft <= 0){
-    // Timer done. Fire cues and clear.
-    clearInterval(_restInterval); _restInterval = null;
-    _restEndsAt = 0;
-    buzz(HAPTIC_REST);
-    playChime();
-    bar.classList.add('hidden');
+    // Catch-up path when the polling interval missed the exact tick.
+    fireRestComplete();
     return;
   }
   bar.classList.remove('hidden');
@@ -2000,6 +2100,10 @@ function confirmSession(){
   window._currentSong=getRandomSong();
   cancelRestTimer();
   requestWakeLock();
+  // Inside a user gesture: prime audio playback and ask for notif
+  // permission. iOS won't grant either outside a tap.
+  unlockAudio();
+  ensureNotifPermission();
   closeSessSheet();save();render();
 }
 
