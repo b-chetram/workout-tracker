@@ -3560,7 +3560,11 @@ async function askCoach(question){
       'no <changes> block.\n\n' +
       'CURRENT TRAINING DATA:\n' + buildCoachContext();
 
-    const messages = [{ role: 'system', content: systemContent }].concat(_coachHistory);
+    // Strip our internal fields (proposal, proposalApplied, etc.) before
+    // sending — the OpenAI-compatible API rejects unknown message keys.
+    const messages = [{ role: 'system', content: systemContent }].concat(
+      _coachHistory.map(m => ({ role: m.role, content: m.content }))
+    );
 
     const resp = await fetch('https://api.groq.com/openai/v1/chat/completions', {
       method: 'POST',
