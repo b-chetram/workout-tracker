@@ -391,7 +391,7 @@ input[type=number]::-webkit-inner-spin-button{-webkit-appearance:none}
         <button class="coach-quick" onclick="askCoach('Recommend exercise alternatives for any lifts I have stalled on')">Alt exercises</button>
         <button class="coach-quick" onclick="askCoach('Give me a quick overall analysis of how my training has been trending')">Analyze training</button>
       </div>
-      <textarea id="coach-input" class="coach-input" placeholder="Ask a follow-up or new question..."></textarea>
+      <textarea id="coach-input" class="coach-input" placeholder="Ask a follow-up or new question…  (Enter to send · Shift+Enter newline)" onkeydown="coachInputKey(event)"></textarea>
       <button class="sheet-confirm" style="background:#e8a838;color:#000;margin-top:10px" onclick="askCoachCustom()">Ask Coach →</button>
       <div id="coach-thread-wrap" style="display:none;margin-top:16px">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
@@ -1153,7 +1153,6 @@ function sparklineSvg(exId, n){
 
 // Artwork cache
 const artCache={};
-const isStandalone=window.navigator.standalone===true;
 
 // Artwork fetcher with two independent sources.
 //
@@ -1224,15 +1223,10 @@ async function fetchArtworkMusicBrainz(song,artist){
 // Every tap just opens Apple Music. The music.apple.com URL is on Apple's
 // universal-link associated-domains list, so on an iOS home screen app this
 // hands off to the native Music app. In a browser tab it opens music.apple.com.
-function openSong(e){
-  if(e&&e.preventDefault) e.preventDefault();
-  const url='https://music.apple.com/';
-  if(isStandalone){
-    location.href=url;
-  } else {
-    window.open(url,'_blank');
-  }
-}
+// openSong was the legacy per-link handler that just opened the
+// generic music.apple.com home page. The vtrack click is now handled
+// by the document-level delegation in the APPLE MUSIC TAP-TO-PLAY
+// section, which deep-links to the actual song.
 
 // Mini player tap: pick a different random song and rerender.
 // Guarantees the new pick is not the same as the current one
@@ -1276,16 +1270,10 @@ function initVibes(){
     const song=nameEl.textContent.trim();
     const artist=artistEl.textContent.trim();
 
-    const link=document.createElement('a');
-    link.href='https://music.apple.com/';
-    link.style.textDecoration='none';
-    link.style.color='inherit';
-    link.onclick=openSong;
-    while(vt.firstChild) link.appendChild(vt.firstChild);
-    vt.appendChild(link);
-
-    // Artwork: staggered calls 1.2s apart (respects Deezer/MusicBrainz rate limits)
-    const artDiv=link.querySelector('.vt-art');
+    // Tap-to-play is wired via the document-level delegation handler
+    // further down in the script. We just fetch artwork here.
+    // Staggered 1.2s apart so we don't trip Deezer/MusicBrainz rate limits.
+    const artDiv=vt.querySelector('.vt-art');
     setTimeout(()=>applyArt(artDiv,song,artist), idx*1200);
   });
 }
@@ -3015,24 +3003,18 @@ document.addEventListener('click', function(e){
   if(!name) return;
   buzz(HAPTIC_SET);
   const q = encodeURIComponent(name + (artist ? ' ' + artist : ''));
-  // music:// is iOS's deep-link scheme for the Music app. The https
-  // form is a universal-link fallback iOS auto-redirects to Music.
-  // Try the scheme first; if nothing intercepts (desktop/Android),
-  // fall through to the web URL.
-  const scheme = 'music://music.apple.com/search?term=' + q;
-  const web    = 'https://music.apple.com/search?term=' + q;
-  // Use a hidden iframe trick so failure to handle the scheme doesn't
-  // navigate away from the app on desktop. On iOS, the scheme handler
-  // takes over immediately.
-  let handled = false;
-  const tStart = Date.now();
-  const onHide = ()=>{ handled = true; };
-  document.addEventListener('visibilitychange', onHide, { once: true });
-  window.location.href = scheme;
-  setTimeout(()=>{
-    document.removeEventListener('visibilitychange', onHide);
-    if(!handled && Date.now() - tStart < 1500) window.open(web, '_blank');
-  }, 600);
+  // Synthetic-anchor click is the canonical "open external app" idiom
+  // for iOS PWAs in standalone mode — iOS routes the music:// scheme
+  // to the Music app without unloading the PWA. _blank prevents
+  // accidental in-PWA navigation if the scheme isn't intercepted.
+  const a = document.createElement('a');
+  a.href = 'music://music.apple.com/search?term=' + q;
+  a.target = '_blank';
+  a.rel = 'noopener';
+  a.style.display = 'none';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
 });
 
 // ══════════════════════════════════════════════════════════════════════
@@ -3388,6 +3370,14 @@ function askCoachCustom(){
   if(!v){ showToast('Type a question first'); return; }
   el.value = '';
   askCoach(v);
+}
+
+// Enter sends; Shift+Enter inserts a newline.
+function coachInputKey(e){
+  if(e.key === 'Enter' && !e.shiftKey && !e.metaKey && !e.ctrlKey){
+    e.preventDefault();
+    askCoachCustom();
+  }
 }
 
 // ══════════════════════════════════════════════════════════════════════
