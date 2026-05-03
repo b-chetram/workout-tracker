@@ -3074,51 +3074,152 @@ function resetCoachKey(){
   document.getElementById('coach-response').innerHTML = '';
 }
 
-// Build a compact text summary of the lifter's actual training data
-// so the model can give specific advice. Last ~5 sessions per exercise.
+// Build a comprehensive context the coach can ground its advice in.
+// Four sections, each compact:
+//   1. STATE      — today's date, week/session, active day, deload info
+//   2. PROGRAM    — every day's full catalog: categories with min/max
+//                   pick constraints + every exercise with sets×reps,
+//                   recommended starting weight, and equipment
+//   3. SESSION    — currently picked exercises + sets logged so far in
+//                   the active session
+//   4. HISTORY    — last 5 sessions per logged exercise (weight×reps@RIR)
+//   5. FEEDBACK   — last 3 post-session pump/soreness/skip ratings
 function buildCoachContext(){
   const lines = [];
   const today = new Date().toISOString().slice(0,10);
+
+  // 1. STATE -------------------------------------------------------
+  lines.push('=== STATE ===');
   lines.push('Today: ' + today);
   lines.push('Default rest: ' + getRestSec() + 's');
   if(S && S.active){
-    const dayName = (DAYS[S.dayIdx] && DAYS[S.dayIdx].label) || (DAYS[S.dayIdx] && DAYS[S.dayIdx].id) || '?';
+    const dayName = (DAYS[S.dayIdx] && (DAYS[S.dayIdx].label || DAYS[S.dayIdx].id)) || '?';
     lines.push('Active session: Week ' + S.week + ', Session ' + S.session + ' (' + dayName + ')');
   } else if(S){
     lines.push('No active session. Last position: Week ' + S.week + ', Session ' + S.session);
   }
-  if(S && S.deload && S.deload.lastWeek){
-    lines.push('Last deload: week ' + S.deload.lastWeek);
+  if(S && S.deload){
+    if(S.deload.lastWeek) lines.push('Last deload: week ' + S.deload.lastWeek);
+    if(S.deload.postponeCount) lines.push('Deload postpones: ' + S.deload.postponeCount);
+  }
+  if(S && S.deloadActive) lines.push('CURRENTLY IN DELOAD WEEK');
+
+  // 2. PROGRAM -----------------------------------------------------
+  // Compact catalog of every day → category → exercise so the coach
+  // knows what the user can pick from and the recommended targets.
+  lines.push('\n=== PROGRAM ===');
+  const allDays = (typeof DAYS !== 'undefined' ? DAYS : []).filter(d => d && d.categories && d.categories.length);
+  for(const day of allDays){
+    const sub = day.sub ? ' (' + day.sub + ')' : '';
+    lines.push((day.label || day.id) + sub);
+    for(const cat of day.categories){
+      const main = cat.isMain ? ' [MAIN LIFT]' : '';
+      const constraint = cat.min === cat.max
+        ? 'pick ' + cat.min + ' of ' + cat.exercises.length
+        : 'pick ' + cat.min + '-' + cat.max + ' of ' + cat.exercises.length;
+      lines.push('  [' + cat.name + ']' + main + ' — ' + constraint + ':');
+      for(const ex of cat.exercises){
+        const sw = (ex.sw != null) ? (ex.sw + (ex.unit ? ex.unit : '')) : 'BW';
+        const equip = ex.equip ? ' (' + ex.equip + ')' : '';
+        lines.push('    - ' + ex.id + ' = ' + ex.name + ' | ' + ex.sets + '×' + ex.rep + ' | start: ' + sw + equip);
+      }
+    }
   }
 
-  // DB has system keys (skipped[], feedback{}, deloadWeeks[]) mixed in
-  // with exercise IDs. Only iterate keys whose value is an array of
-  // session entries — that's the exercise log shape.
+  // 3. ACTIVE SESSION ---------------------------------------------
+  if(S && S.active){
+    lines.push('\n=== TODAY\'S SESSION ===');
+    const day = DAYS[S.dayIdx];
+    if(day && day.categories){
+      for(const cat of day.categories){
+        let picked = [];
+        try { picked = (typeof getSelectedForCat === 'function') ? getSelectedForCat(cat.id, day) : []; } catch(e){}
+        if(picked && picked.length){
+          const names = picked.map(id => {
+            const e = (cat.exercises || []).find(x => x.id === id);
+            return e ? e.name : id;
+          }).join(', ');
+          lines.push('- ' + cat.name + ': ' + names);
+        }
+      }
+    }
+    // Sets logged THIS session (S.setData keyed as "exId-setIdx")
+    const sd = (S && S.setData) || {};
+    const liveKeys = Object.keys(sd);
+    if(liveKeys.length){
+      lines.push('Logged this session:');
+      // group by exercise
+      const byEx = {};
+      for(const k of liveKeys){
+        const dash = k.lastIndexOf('-');
+        if(dash < 0) continue;
+        const exId = k.slice(0, dash);
+        const idx  = parseInt(k.slice(dash+1), 10);
+        (byEx[exId] = byEx[exId] || []).push({ idx, ...sd[k] });
+      }
+      for(const exId of Object.keys(byEx)){
+        const ex = findEx(exId);
+        const name = ex ? ex.name : exId;
+        const unit = ex ? (ex.unit || '') : '';
+        const sets = byEx[exId].sort((a,b)=>a.idx-b.idx)
+          .map(s => 'set' + (s.idx+1) + ': ' + s.weight + (unit ? unit : '') + '×' + s.reps + '@RIR' + (s.rir ?? '?'))
+          .join(', ');
+        lines.push('  ' + name + ' → ' + sets);
+      }
+    }
+  }
+
+  // 4. HISTORY -----------------------------------------------------
   const SYSTEM_KEYS = { skipped:1, feedback:1, deloadWeeks:1 };
   const exIds = Object.keys(DB || {}).filter(k => !SYSTEM_KEYS[k] && Array.isArray(DB[k]));
+  lines.push('\n=== HISTORY (last 5 sessions per exercise — weight×reps@RIR) ===');
   if(exIds.length === 0){
-    lines.push('\nNo logged exercise history yet.');
-    return lines.join('\n');
+    lines.push('(no logged exercise history yet)');
+  } else {
+    let logged = 0;
+    for(const exId of exIds){
+      const ex = findEx(exId);
+      const exName = ex ? ex.name : exId;
+      const unit = ex ? (ex.unit || '') : '';
+      const recent = DB[exId].slice(-5);
+      if(recent.length === 0) continue;
+      const summaries = recent.map(e => {
+        const sets = ((e && e.sets) || []).filter(s => s).map(s => {
+          const r = (s.rir == null || s.rir === '') ? '?' : s.rir;
+          return s.weight + (unit ? unit : '') + '×' + s.reps + '@RIR' + r;
+        }).join(', ');
+        return 'wk' + (e && e.week) + 's' + (e && e.session) + ': ' + sets;
+      }).join(' | ');
+      lines.push('- ' + exName + ': ' + summaries);
+      logged++;
+    }
+    if(logged === 0) lines.push('(no logged sets yet)');
   }
-  lines.push('\nRecent training (last 5 sessions per exercise — format: weight×reps@RIR):');
-  let logged = 0;
-  for(const exId of exIds){
-    const ex = findEx(exId);
-    const exName = ex ? ex.name : exId;
-    const unit = ex ? (ex.unit || '') : '';
-    const recent = DB[exId].slice(-5);
-    if(recent.length === 0) continue;
-    const summaries = recent.map(e => {
-      const sets = ((e && e.sets) || []).filter(s => s).map(s => {
-        const r = (s.rir == null || s.rir === '') ? '?' : s.rir;
-        return s.weight + (unit ? unit : '') + '×' + s.reps + '@RIR' + r;
-      }).join(', ');
-      return 'wk' + (e && e.week) + 's' + (e && e.session) + ': ' + sets;
-    }).join(' | ');
-    lines.push('- ' + exName + ': ' + summaries);
-    logged++;
+
+  // 5. RECENT FEEDBACK / SKIPS ------------------------------------
+  const fb = (DB && DB.feedback) || {};
+  const fbKeys = Object.keys(fb).slice(-3);
+  if(fbKeys.length){
+    lines.push('\n=== RECENT FEEDBACK (last 3) ===');
+    for(const k of fbKeys){
+      const f = fb[k] || {};
+      const bits = [];
+      if(f.pump != null)  bits.push('pump ' + f.pump + '/5');
+      if(f.sore != null)  bits.push('soreness ' + f.sore + '/5');
+      if(f.notes)         bits.push('"' + String(f.notes).slice(0, 80) + '"');
+      lines.push('- ' + k + ': ' + (bits.join(', ') || '(no detail)'));
+    }
   }
-  if(logged === 0) lines.push('(no logged sets yet)');
+  const skipped = (DB && Array.isArray(DB.skipped)) ? DB.skipped.slice(-3) : [];
+  if(skipped.length){
+    lines.push('\n=== RECENT SKIPS (last 3) ===');
+    for(const sk of skipped){
+      const cat = sk.category || sk.reason || '?';
+      const dt  = sk.date || ('wk' + (sk.week||'?') + 's' + (sk.session||'?'));
+      lines.push('- ' + dt + ': ' + cat + (sk.notes ? ' — "' + String(sk.notes).slice(0,80) + '"' : ''));
+    }
+  }
+
   return lines.join('\n');
 }
 
