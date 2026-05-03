@@ -221,10 +221,17 @@ input[type=number]::-webkit-inner-spin-button{-webkit-appearance:none}
 .coach-input:focus,.coach-key:focus{border-color:rgba(255,255,255,.2)}
 .coach-quick{background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.06);color:rgba(255,255,255,.85);border-radius:18px;padding:8px 14px;font-size:12px;font-weight:600;cursor:pointer;-webkit-tap-highlight-color:transparent}
 .coach-quick:active{background:rgba(255,255,255,.1)}
-.coach-resp{white-space:pre-wrap;line-height:1.55;padding:14px;background:rgba(255,255,255,.04);border-radius:12px;font-size:14px;color:rgba(255,255,255,.92)}
+.coach-resp{white-space:pre-wrap;line-height:1.55;padding:12px 14px;background:rgba(255,255,255,.04);border-radius:14px 14px 14px 4px;font-size:14px;color:rgba(255,255,255,.92);max-width:88%}
+.coach-user{white-space:pre-wrap;line-height:1.5;padding:10px 14px;background:rgba(232,168,56,.18);border-radius:14px 14px 4px 14px;font-size:14px;color:rgba(255,255,255,.95);max-width:88%;margin-left:auto;font-weight:500}
+.coach-msg-row{display:flex;margin-bottom:10px}
+.coach-msg-row.user{justify-content:flex-end}
+.coach-msg-row.assistant{justify-content:flex-start}
+.coach-thread{max-height:50vh;overflow-y:auto;margin-top:14px;padding-right:4px;-webkit-overflow-scrolling:touch}
 .coach-err{padding:14px;background:rgba(232,93,93,.1);border:1px solid rgba(232,93,93,.3);border-radius:12px;color:#e85d5d;font-size:13px;line-height:1.5}
-.coach-loading{padding:14px;color:rgba(255,255,255,.5);font-size:14px;text-align:center;font-style:italic}
+.coach-loading{padding:14px;color:rgba(255,255,255,.5);font-size:14px;font-style:italic}
 .coach-link{color:#5ec4f4;text-decoration:underline}
+.coach-clear{background:none;border:1px solid rgba(255,255,255,.08);color:rgba(255,255,255,.5);border-radius:18px;padding:6px 12px;font-size:11px;font-weight:600;cursor:pointer;-webkit-tap-highlight-color:transparent}
+.coach-clear:active{background:rgba(255,255,255,.05)}
 </style>
 </head>
 <body>
@@ -384,9 +391,15 @@ input[type=number]::-webkit-inner-spin-button{-webkit-appearance:none}
         <button class="coach-quick" onclick="askCoach('Recommend exercise alternatives for any lifts I have stalled on')">Alt exercises</button>
         <button class="coach-quick" onclick="askCoach('Give me a quick overall analysis of how my training has been trending')">Analyze training</button>
       </div>
-      <textarea id="coach-input" class="coach-input" placeholder="Ask anything about your training..."></textarea>
+      <textarea id="coach-input" class="coach-input" placeholder="Ask a follow-up or new question..."></textarea>
       <button class="sheet-confirm" style="background:#e8a838;color:#000;margin-top:10px" onclick="askCoachCustom()">Ask Coach →</button>
-      <div id="coach-response" style="margin-top:14px"></div>
+      <div id="coach-thread-wrap" style="display:none;margin-top:16px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+          <div style="font-size:11px;color:rgba(255,255,255,.35);text-transform:uppercase;letter-spacing:1.2px;font-weight:700">Conversation</div>
+          <button class="coach-clear" onclick="clearCoachChat()">Clear</button>
+        </div>
+        <div id="coach-thread" class="coach-thread"></div>
+      </div>
     </div>
 
     <button class="sheet-cancel" onclick="closeCoachSheet()">Close</button>
@@ -3053,6 +3066,8 @@ function openCoachSheet(){
   document.getElementById('coach-key-row').style.display   = hasKey ? 'none'  : 'block';
   document.getElementById('coach-chat-area').style.display = hasKey ? 'block' : 'none';
   overlay.classList.remove('hidden');
+  // Render any existing conversation so the user sees it on re-open.
+  if(hasKey) renderCoachThread();
 }
 function closeCoachSheet(){
   document.getElementById('coach-overlay').classList.add('hidden');
@@ -3071,7 +3086,8 @@ function resetCoachKey(){
   clearCoachKey();
   document.getElementById('coach-key-row').style.display   = 'block';
   document.getElementById('coach-chat-area').style.display = 'none';
-  document.getElementById('coach-response').innerHTML = '';
+  const thread = document.getElementById('coach-thread');
+  if(thread) thread.innerHTML = '';
 }
 
 // Build a comprehensive context the coach can ground its advice in.
@@ -3227,21 +3243,87 @@ function _esc(s){
   return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
 
+// CONVERSATION STATE -------------------------------------------------
+// Multi-turn chat. The thread is persisted in localStorage so reloading
+// the app keeps the conversation. We cap to MAX_TURNS pairs to keep
+// per-request token cost bounded — the system message (which carries
+// the full program + history context) is rebuilt fresh each turn.
+const COACH_THREAD_LS = 'wt_coach_thread';
+const COACH_MAX_TURNS = 10; // 10 user/assistant pairs
+let _coachHistory = [];     // [{role:'user'|'assistant', content:string}, ...]
+
+(function loadCoachHistory(){
+  try {
+    const raw = localStorage.getItem(COACH_THREAD_LS);
+    if(raw){
+      const parsed = JSON.parse(raw);
+      if(Array.isArray(parsed)) _coachHistory = parsed.slice(-COACH_MAX_TURNS * 2);
+    }
+  } catch(e){}
+})();
+
+function saveCoachHistory(){
+  try { localStorage.setItem(COACH_THREAD_LS, JSON.stringify(_coachHistory)); } catch(e){}
+}
+
+function clearCoachChat(){
+  if(_coachHistory.length && !confirm('Clear the conversation with the coach?')) return;
+  _coachHistory = [];
+  saveCoachHistory();
+  renderCoachThread();
+}
+
+function renderCoachThread(loadingMsg){
+  const wrap = document.getElementById('coach-thread-wrap');
+  const thread = document.getElementById('coach-thread');
+  if(!wrap || !thread) return;
+  if(_coachHistory.length === 0 && !loadingMsg){
+    wrap.style.display = 'none';
+    thread.innerHTML = '';
+    return;
+  }
+  wrap.style.display = 'block';
+  let html = '';
+  for(const msg of _coachHistory){
+    const cls = msg.role === 'user' ? 'user' : 'assistant';
+    const bubble = msg.role === 'user' ? 'coach-user' : 'coach-resp';
+    html += '<div class="coach-msg-row ' + cls + '"><div class="' + bubble + '">' + _esc(msg.content) + '</div></div>';
+  }
+  if(loadingMsg){
+    html += '<div class="coach-msg-row assistant"><div class="coach-loading">' + _esc(loadingMsg) + '</div></div>';
+  }
+  thread.innerHTML = html;
+  // Auto-scroll to the latest message.
+  requestAnimationFrame(()=>{ thread.scrollTop = thread.scrollHeight; });
+}
+
 async function askCoach(question){
   const key = getCoachKey();
   if(!key){ showToast('⚠️ Set your API key first'); return; }
-  const responseEl = document.getElementById('coach-response');
-  responseEl.innerHTML = '<div class="coach-loading">Coach is thinking…</div>';
+
+  // Append the user turn first so the UI shows their message immediately
+  _coachHistory.push({ role: 'user', content: question });
+  // Cap to keep token cost bounded
+  if(_coachHistory.length > COACH_MAX_TURNS * 2){
+    _coachHistory = _coachHistory.slice(-COACH_MAX_TURNS * 2);
+  }
+  saveCoachHistory();
+  renderCoachThread('Coach is thinking…');
+
   try {
-    const context = buildCoachContext();
-    const prompt =
-      'You are a strength training coach for a hypertrophy-focused lifter using ' +
-      'a workout tracker app. Use the user\'s actual training history to give ' +
-      'specific, actionable advice — concrete weights, rep targets, exercise ' +
-      'swaps. Keep answers under 220 words. Be direct: short justification, ' +
-      'then the recommendation. No fluff, no disclaimers.\n\n' +
-      'TRAINING DATA:\n' + context + '\n\n' +
-      'USER QUESTION:\n' + question;
+    // Rebuild the context fresh every turn — the user may have logged
+    // a set during the chat, and we want the coach to see it.
+    const systemContent =
+      'You are a strength training coach for a hypertrophy-focused lifter ' +
+      'using a workout tracker app. Use the user\'s actual training data ' +
+      '(below) to give specific, actionable advice — concrete weights, rep ' +
+      'targets, exercise swaps using exercise IDs from the catalog. Keep ' +
+      'answers under 220 words. Be direct: short justification, then the ' +
+      'recommendation. No fluff, no disclaimers. Remember the conversation ' +
+      'so far and build on previous answers when the user follows up.\n\n' +
+      'CURRENT TRAINING DATA:\n' + buildCoachContext();
+
+    const messages = [{ role: 'system', content: systemContent }].concat(_coachHistory);
 
     const resp = await fetch('https://api.groq.com/openai/v1/chat/completions', {
       method: 'POST',
@@ -3251,7 +3333,7 @@ async function askCoach(question){
       },
       body: JSON.stringify({
         model: COACH_MODEL,
-        messages: [{ role: 'user', content: prompt }],
+        messages: messages,
         temperature: 0.6,
         max_tokens: 600
       })
@@ -3261,20 +3343,42 @@ async function askCoach(question){
       const errText = await resp.text();
       let msg = 'Error ' + resp.status;
       try { const j = JSON.parse(errText); if(j.error && j.error.message) msg = j.error.message; } catch(e){}
-      responseEl.innerHTML = '<div class="coach-err">' + _esc(msg) + '</div>';
+      // Roll back the user turn so retry doesn't double-send it
+      _coachHistory.pop();
+      saveCoachHistory();
+      renderCoachThread();
+      const thread = document.getElementById('coach-thread');
+      if(thread){
+        thread.insertAdjacentHTML('beforeend', '<div class="coach-msg-row assistant"><div class="coach-err">' + _esc(msg) + '</div></div>');
+        requestAnimationFrame(()=>{ thread.scrollTop = thread.scrollHeight; });
+        document.getElementById('coach-thread-wrap').style.display = 'block';
+      }
       return;
     }
+
     const data = await resp.json();
     const text = (((data || {}).choices || [])[0] || {}).message
                   ? (data.choices[0].message.content || '').trim()
                   : '';
     if(!text){
-      responseEl.innerHTML = '<div class="coach-err">No response. The model returned empty content.</div>';
+      _coachHistory.pop();
+      saveCoachHistory();
+      renderCoachThread();
       return;
     }
-    responseEl.innerHTML = '<div class="coach-resp">' + _esc(text) + '</div>';
+    _coachHistory.push({ role: 'assistant', content: text });
+    saveCoachHistory();
+    renderCoachThread();
   } catch(e){
-    responseEl.innerHTML = '<div class="coach-err">' + _esc(e && e.message ? e.message : 'Network error') + '</div>';
+    _coachHistory.pop();
+    saveCoachHistory();
+    renderCoachThread();
+    const thread = document.getElementById('coach-thread');
+    if(thread){
+      thread.insertAdjacentHTML('beforeend', '<div class="coach-msg-row assistant"><div class="coach-err">' + _esc(e && e.message ? e.message : 'Network error') + '</div></div>');
+      requestAnimationFrame(()=>{ thread.scrollTop = thread.scrollHeight; });
+      document.getElementById('coach-thread-wrap').style.display = 'block';
+    }
   }
 }
 
