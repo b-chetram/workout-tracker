@@ -1011,11 +1011,12 @@ let _restTotalMs       = 0;
 let _restFired         = false;
 
 function getRestSec(){
-  const n = parseInt(localStorage.getItem(REST_KEY)||'', 10);
+  let n = NaN;
+  try { n = parseInt(localStorage.getItem(REST_KEY)||'', 10); } catch(e){}
   return (n>=15 && n<=600) ? n : REST_DEFAULT_SEC;
 }
 function setRestSec(s){
-  localStorage.setItem(REST_KEY, String(s));
+  try { localStorage.setItem(REST_KEY, String(s)); } catch(e){}
 }
 
 function startRestTimer(seconds){
