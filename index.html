@@ -1275,19 +1275,46 @@ async function fetchArtworkMusicBrainz(song,artist){
 // preview clip via Deezer. Replaces the old shuffleSong (silent shuffle).
 // Default app state is no audio — playback only starts after this tap.
 let _previewAudio = null;
+let _previewUnlocked = false;
+let _shuffleSeq = 0;
+
+// Tiny silent WAV used as a placeholder src so the audio element
+// can be play()'d inside a user gesture before we have the real
+// preview URL — this primes iOS so the post-fetch play() resolves
+// even after an async network round-trip breaks the gesture token.
+function _silentWavUrl(){
+  const buf = new ArrayBuffer(46);
+  const v = new DataView(buf);
+  const ws = (off, str) => { for(let i=0;i<str.length;i++) v.setUint8(off+i, str.charCodeAt(i)); };
+  ws(0,'RIFF'); v.setUint32(4, 38, true); ws(8,'WAVE');
+  ws(12,'fmt '); v.setUint32(16,16,true); v.setUint16(20,1,true); v.setUint16(22,1,true);
+  v.setUint32(24,44100,true); v.setUint32(28,88200,true); v.setUint16(32,2,true); v.setUint16(34,16,true);
+  ws(36,'data'); v.setUint32(40, 2, true); v.setUint16(44, 0, true);
+  return URL.createObjectURL(new Blob([buf], {type:'audio/wav'}));
+}
+
 function getPreviewAudio(){
   if(_previewAudio) return _previewAudio;
   _previewAudio = new Audio();
-  _previewAudio.preload = 'none';
+  _previewAudio.preload = 'auto';
   _previewAudio.volume  = 0.7;
-  _previewAudio.addEventListener('ended', () => {
-    window._previewPlaying = false;
+  _previewAudio.src     = _silentWavUrl();
+  // Drive UI strictly from real audio events so phone-call interrupts,
+  // background pauses, and natural end all flip the playing flag and
+  // trigger a re-render. Previously only end-of-track and explicit
+  // currentTime=0 resets updated the UI, leaving 'playing' stuck on
+  // after iOS interrupted playback.
+  _previewAudio.addEventListener('play', () => {
+    window._previewPlaying = true;
     if(typeof render === 'function') render();
   });
   _previewAudio.addEventListener('pause', () => {
-    if(_previewAudio && _previewAudio.currentTime === 0){
-      window._previewPlaying = false;
-    }
+    window._previewPlaying = false;
+    if(typeof render === 'function') render();
+  });
+  _previewAudio.addEventListener('ended', () => {
+    window._previewPlaying = false;
+    if(typeof render === 'function') render();
   });
   return _previewAudio;
 }
@@ -1303,17 +1330,18 @@ function stopPreview(){
 // least once, since there's no audio to control yet.
 function togglePreviewPlayback(e){
   if(e){ e.preventDefault(); e.stopPropagation(); }
-  if(!_previewAudio || !_previewAudio.src) return;
+  if(!_previewAudio) return;
+  // Only act when a real preview track is loaded — the silent
+  // placeholder src has a near-zero duration, real Deezer clips ~30s.
+  const dur = _previewAudio.duration;
+  if(!isFinite(dur) || dur < 1) return;
   buzz(HAPTIC_SET);
+  // Audio 'play'/'pause' event listeners drive _previewPlaying + render.
   if(_previewAudio.paused){
     const p = _previewAudio.play();
-    window._previewPlaying = true;
-    if(p && p.catch) p.catch(()=>{ window._previewPlaying = false; render(); });
-    render();
+    if(p && p.catch) p.catch(()=>{});
   } else {
     _previewAudio.pause();
-    window._previewPlaying = false;
-    render();
   }
 }
 
@@ -1332,21 +1360,40 @@ async function shuffleAndPreviewSong(e){
   stopPreview();
   render(); // shows the new song
 
-  // Fetch preview URL and play. iOS audio is unlocked here because we
-  // are inside a user gesture; subsequent play() resolves even after
-  // the async fetch on most modern iOS versions.
+  // Sequence guard: if the user taps shuffle multiple times in quick
+  // succession, the LATEST call wins. Stale fetches that resolve
+  // after a newer tap are discarded so the audio matches the visible
+  // song instead of being driven by whichever request finished last.
+  const mySeq = ++_shuffleSeq;
+
+  // Synchronous iOS unlock attempt INSIDE the user gesture. Plays
+  // the silent placeholder src so the audio session is "warm" before
+  // the async fetch consumes the gesture token. After this, the
+  // post-fetch audio.play() works reliably on iOS Safari/PWA.
+  const audio = getPreviewAudio();
+  if(!_previewUnlocked){
+    try {
+      audio.muted = true;
+      const unlock = audio.play();
+      if(unlock && unlock.then){
+        unlock.then(() => { try{audio.pause();audio.currentTime=0;}catch(_){} audio.muted=false; _previewUnlocked=true; })
+              .catch(() => { audio.muted = false; });
+      } else {
+        audio.muted = false;
+        _previewUnlocked = true;
+      }
+    } catch(_){ try{audio.muted=false;}catch(__){} }
+  }
+
+  // Fetch preview URL and play.
   const data = await fetchSongData(next.n, next.a);
+  if(mySeq !== _shuffleSeq) return; // a newer tap superseded us
   if(data && data.preview){
-    const audio = getPreviewAudio();
     try {
       audio.src = data.preview;
-      window._previewPlaying = true;
       const p = audio.play();
-      if(p && p.catch){
-        p.catch(() => { window._previewPlaying = false; render(); });
-      }
-      render();
-    } catch(_){ window._previewPlaying = false; render(); }
+      if(p && p.catch) p.catch(() => { /* play listener will reset state */ });
+    } catch(_){}
   }
 }
 
@@ -1358,9 +1405,11 @@ function openInAppleMusicSong(e){
   buzz(HAPTIC_SET);
   // Same synthetic-anchor pattern used by the vtrack tap handler so
   // iOS routes the music:// scheme without unloading the PWA.
-  const q = encodeURIComponent(song.n + ' ' + song.a);
+  // Quote the song title and constrain to songs-only so Apple Music
+  // ranks the actual track first instead of remixes/playlists.
+  const q = encodeURIComponent('"' + song.n + '" ' + song.a);
   const a = document.createElement('a');
-  a.href = 'music://music.apple.com/search?term=' + q;
+  a.href = 'music://music.apple.com/search?term=' + q + '&types=songs';
   a.target = '_blank';
   a.rel = 'noopener';
   a.style.display = 'none';
@@ -2568,7 +2617,9 @@ function render(){
   if(!window._currentSong) window._currentSong=getRandomSong();
   const song=window._currentSong;
   const playing = !!window._previewPlaying;
-  const hasAudio = !!_previewAudio;
+  // Pause button only meaningful once a real preview track is loaded
+  // (the silent placeholder used for iOS unlock has near-zero duration).
+  const hasAudio = !!(_previewAudio && isFinite(_previewAudio.duration) && _previewAudio.duration > 1);
   document.getElementById('mini-player').innerHTML=`
     <div class="mini-p">
       <button class="mp-main ${playing?'playing':''}" onclick="shuffleAndPreviewSong(event)" title="Tap to shuffle + preview">
@@ -3141,7 +3192,12 @@ function exportBackup(){
     version: BACKUP_VERSION,
     exportedAt: new Date().toISOString(),
     S: S,
-    DB: DB
+    DB: DB,
+    // User settings stored outside S (so far just rest interval).
+    // Importer reads this and writes back via setRestSec.
+    settings: {
+      restSec: getRestSec()
+    }
   };
   const json = JSON.stringify(payload, null, 2);
   const blob = new Blob([json], { type: 'application/json' });
@@ -3206,6 +3262,14 @@ function handleImportFileChosen(event){
                 + 'If you want to keep your current data, tap Export first.';
       if(!confirm(msg)) return;
 
+      // Tear out current AI additions from runtime BEFORE replacing S,
+      // otherwise stale exercises/songs hang around in the catalog
+      // alongside whatever the imported backup wants.
+      if(S && S.aiPrefs){
+        if(S.aiPrefs.addedExercises) unapplyAddedExercises(S.aiPrefs.addedExercises);
+        if(S.aiPrefs.addedSongs)     unapplyAddedSongs(S.aiPrefs.addedSongs);
+      }
+
       // Replace state. Preserve the load()-style defensive defaults.
       S = Object.assign({week:1,session:1,dayIdx:0,active:false,sessionDate:null,lastDayId:null,
                          setData:{},expandedEx:null,selectedEx:{},
@@ -3217,6 +3281,14 @@ function handleImportFileChosen(event){
       if(!DB.skipped) DB.skipped = [];
       if(!DB.feedback) DB.feedback = {};
       if(!DB.deloadWeeks) DB.deloadWeeks = [];
+
+      // Restore user settings (rest interval) + push imported AI
+      // additions into the runtime catalog.
+      if(parsed.settings && typeof parsed.settings.restSec === 'number'){
+        setRestSec(parsed.settings.restSec);
+      }
+      applyAddedExercises();
+      applyAddedSongs();
 
       save();
       cancelRestTimer();
@@ -3254,6 +3326,13 @@ function handleReset(){
   } else {
     clearTimeout(resetTimer);
     resetArmed=false;
+    // Tear out any AI-added exercises and songs from the runtime
+    // catalog BEFORE wiping S, otherwise the picker keeps showing
+    // them until the next page reload.
+    if(S && S.aiPrefs){
+      if(S.aiPrefs.addedExercises) unapplyAddedExercises(S.aiPrefs.addedExercises);
+      if(S.aiPrefs.addedSongs)     unapplyAddedSongs(S.aiPrefs.addedSongs);
+    }
     DB={};
     S={week:1,session:1,dayIdx:0,active:false,sessionDate:null,lastDayId:null,setData:{},expandedEx:null,selectedEx:{},deload:{lastWeek:0,postponeCount:0},deloadActive:false};
     save();
@@ -3279,13 +3358,11 @@ document.addEventListener('click', function(e){
   const artist = row.querySelector('.vt-artist')?.textContent?.trim();
   if(!name) return;
   buzz(HAPTIC_SET);
-  const q = encodeURIComponent(name + (artist ? ' ' + artist : ''));
-  // Synthetic-anchor click is the canonical "open external app" idiom
-  // for iOS PWAs in standalone mode — iOS routes the music:// scheme
-  // to the Music app without unloading the PWA. _blank prevents
-  // accidental in-PWA navigation if the scheme isn't intercepted.
+  // Quote the title so Apple Music's search ranks the literal track,
+  // and constrain to songs-only.
+  const q = encodeURIComponent('"' + name + '"' + (artist ? ' ' + artist : ''));
   const a = document.createElement('a');
-  a.href = 'music://music.apple.com/search?term=' + q;
+  a.href = 'music://music.apple.com/search?term=' + q + '&types=songs';
   a.target = '_blank';
   a.rel = 'noopener';
   a.style.display = 'none';
@@ -3569,13 +3646,17 @@ function parseCoachProposal(text){
   }
   // Validate "add_exercises": new exercises the AI wants added to a
   // category. Strict — every field is type-checked and clamped, and
-  // we silently drop anything that doesn't pass. ID collision is
-  // checked globally (findEx walks all days, so duplicate IDs in
-  // *any* category would cause lookups to return the wrong exercise).
+  // we silently drop anything that doesn't pass. Both ID and display
+  // NAME are deduped globally (findEx walks all days, and duplicate
+  // labels in the picker are confusing).
   const cleanAdds = {};
   const allIds = new Set();
+  const allNames = new Set();
   for(const d of (typeof DAYS !== 'undefined' ? DAYS : [])){
-    for(const e of (d.exercises || [])) allIds.add(e.id);
+    for(const e of (d.exercises || [])){
+      allIds.add(e.id);
+      if(e.name) allNames.add(String(e.name).toLowerCase());
+    }
   }
   if(parsed && parsed.add_exercises && typeof parsed.add_exercises === 'object'){
     for(const catId of Object.keys(parsed.add_exercises)){
@@ -3585,8 +3666,12 @@ function parseCoachProposal(text){
       if(!Array.isArray(arr)) continue;
       const valid = [];
       for(const raw of arr){
-        const v = _validateAddedExercise(raw, allIds);
-        if(v){ valid.push(v); allIds.add(v.id); }
+        const v = _validateAddedExercise(raw, allIds, allNames);
+        if(v){
+          valid.push(v);
+          allIds.add(v.id);
+          allNames.add(v.name.toLowerCase());
+        }
       }
       if(valid.length) cleanAdds[catId] = valid;
     }
@@ -3670,11 +3755,12 @@ function _validateAddedSong(raw, existingKeys){
 // Strict validator for AI-proposed new exercises. Returns a clean
 // exercise object compatible with the existing catalog shape, or
 // null if any required field is invalid.
-function _validateAddedExercise(raw, existingIds){
+function _validateAddedExercise(raw, existingIds, existingNames){
   if(!raw || typeof raw !== 'object') return null;
   if(typeof raw.id !== 'string' || !/^[a-z0-9_]{2,30}$/i.test(raw.id)) return null;
   if(existingIds && existingIds.has(raw.id)) return null;
   if(typeof raw.name !== 'string' || raw.name.length < 2 || raw.name.length > 60) return null;
+  if(existingNames && existingNames.has(raw.name.toLowerCase())) return null;
   const sets = parseInt(raw.sets, 10);
   if(!Number.isInteger(sets) || sets < 1 || sets > 10) return null;
   const rep = (typeof raw.rep === 'string' && raw.rep.length <= 30) ? raw.rep : '8 to 12';
@@ -3735,9 +3821,27 @@ function _proposalDiffText(proposal){
 // Apply a proposal: replace S.aiPrefs entirely (simpler than merging),
 // reset session-level picks for any touched category so the new
 // limits take effect immediately, save, and re-render.
+// Cap on how many prior aiPrefs snapshots to retain for one-step
+// undo. 5 is enough to walk back several iterations without bloating
+// localStorage. Stored under S.aiUndoStack so it persists in saved state.
+const COACH_UNDO_MAX = 5;
+
 function applyCoachProposal(historyIdx){
   const msg = _coachHistory[historyIdx];
   if(!msg || !msg.proposal) return;
+
+  // Snapshot the CURRENT aiPrefs (deep-cloned) onto the undo stack
+  // before mutating, so a later "Undo last" can restore exactly this
+  // state including its runtime catalog mutations.
+  if(hasAiPrefs()){
+    const snapshot = JSON.parse(JSON.stringify(S.aiPrefs));
+    if(!Array.isArray(S.aiUndoStack)) S.aiUndoStack = [];
+    S.aiUndoStack.push(snapshot);
+    if(S.aiUndoStack.length > COACH_UNDO_MAX){
+      S.aiUndoStack = S.aiUndoStack.slice(-COACH_UNDO_MAX);
+    }
+  }
+
   // Preserve previously-added exercises and songs across applies
   // (latest summary + category overrides win, but additions accumulate).
   const prevAdds  = (S.aiPrefs && S.aiPrefs.addedExercises) || {};
@@ -3813,12 +3917,46 @@ function revertCoachPrefs(){
     unapplyAddedSongs(S.aiPrefs.addedSongs);
   }
   delete S.aiPrefs;
+  S.aiUndoStack = [];
   if(S.selectedEx) S.selectedEx = {};
   save();
   renderCoachPrefsBanner();
   renderCoachThread();
   if(typeof render === 'function') render();
   showToast('Reverted to defaults');
+}
+
+// Pop the most recent snapshot off the undo stack and restore that
+// state. Cheaper than full revert: lets the user walk back proposals
+// one at a time. Tears down the current catalog mutations and re-applies
+// the previous ones cleanly.
+function undoLastCoachApply(){
+  const stack = (S && Array.isArray(S.aiUndoStack)) ? S.aiUndoStack : [];
+  if(stack.length === 0) return;
+  // Tear down current additions
+  if(S.aiPrefs){
+    if(S.aiPrefs.addedExercises) unapplyAddedExercises(S.aiPrefs.addedExercises);
+    if(S.aiPrefs.addedSongs)     unapplyAddedSongs(S.aiPrefs.addedSongs);
+  }
+  // Restore the previous snapshot
+  const prev = stack.pop();
+  S.aiUndoStack = stack;
+  if(prev && (Object.keys(prev.categories || {}).length ||
+              Object.keys(prev.addedExercises || {}).length ||
+              (Array.isArray(prev.addedSongs) && prev.addedSongs.length))){
+    S.aiPrefs = prev;
+    applyAddedExercises();
+    applyAddedSongs();
+  } else {
+    delete S.aiPrefs;
+  }
+  // Clear stale picks so defaults repopulate against the restored limits
+  if(S.selectedEx) S.selectedEx = {};
+  save();
+  renderCoachPrefsBanner();
+  renderCoachThread();
+  if(typeof render === 'function') render();
+  showToast('↩ Undid last coach change');
 }
 
 function renderCoachPrefsBanner(){
@@ -3832,8 +3970,13 @@ function renderCoachPrefsBanner(){
   const summary = (S.aiPrefs && S.aiPrefs.summary) || 'AI changes active';
   banner.style.display = 'block';
   banner.className = 'coach-prefs-active';
+  const stack = (S && Array.isArray(S.aiUndoStack)) ? S.aiUndoStack : [];
+  const undoBtn = stack.length > 0
+    ? '<button class="coach-prefs-revert" onclick="undoLastCoachApply()" title="Restore the previous AI prefs state">Undo</button>'
+    : '';
   banner.innerHTML =
     '<div class="summary">🤖 ' + _esc(summary) + '</div>' +
+    undoBtn +
     '<button class="coach-prefs-revert" onclick="revertCoachPrefs()">Revert</button>';
 }
 
@@ -3867,6 +4010,21 @@ function clearCoachChat(){
   renderCoachThread();
 }
 
+// Relative-time string for the chat staleness header. Older messages
+// stored before timestamps existed return null and the header is
+// suppressed for them.
+function _coachRelTime(ts){
+  if(!ts || typeof ts !== 'number') return null;
+  const now = Date.now();
+  const sec = Math.max(0, Math.floor((now - ts) / 1000));
+  if(sec < 60)        return 'just now';
+  if(sec < 3600)      return Math.floor(sec/60) + ' min ago';
+  if(sec < 86400)     return Math.floor(sec/3600) + ' hr ago';
+  if(sec < 86400*7)   return Math.floor(sec/86400) + ' days ago';
+  if(sec < 86400*30)  return Math.floor(sec/(86400*7)) + ' wk ago';
+  return Math.floor(sec/(86400*30)) + ' mo ago';
+}
+
 function renderCoachThread(loadingMsg){
   const wrap = document.getElementById('coach-thread-wrap');
   const thread = document.getElementById('coach-thread');
@@ -3878,6 +4036,16 @@ function renderCoachThread(loadingMsg){
   }
   wrap.style.display = 'block';
   let html = '';
+  // Staleness header — only shown if there's at least one timestamped
+  // message and the most recent activity is older than ~15 minutes,
+  // so the user spots resumed-from-storage threads at a glance.
+  let lastTs = null;
+  for(let j = _coachHistory.length - 1; j >= 0; j--){
+    if(_coachHistory[j].t){ lastTs = _coachHistory[j].t; break; }
+  }
+  if(lastTs && (Date.now() - lastTs) > 15 * 60 * 1000){
+    html += '<div style="font-size:11px;color:rgba(255,255,255,.35);text-align:center;padding:4px 0 8px;letter-spacing:.4px">Last activity ' + _esc(_coachRelTime(lastTs)) + '</div>';
+  }
   for(let i = 0; i < _coachHistory.length; i++){
     const msg = _coachHistory[i];
     const cls = msg.role === 'user' ? 'user' : 'assistant';
@@ -3913,8 +4081,9 @@ async function askCoach(question){
   const key = getCoachKey();
   if(!key){ showToast('⚠️ Set your API key first'); return; }
 
-  // Append the user turn first so the UI shows their message immediately
-  _coachHistory.push({ role: 'user', content: question });
+  // Append the user turn first so the UI shows their message immediately.
+  // Timestamp helps the user spot stale conversations on later reopens.
+  _coachHistory.push({ role: 'user', content: question, t: Date.now() });
   // Cap to keep token cost bounded
   if(_coachHistory.length > COACH_MAX_TURNS * 2){
     _coachHistory = _coachHistory.slice(-COACH_MAX_TURNS * 2);
@@ -4026,6 +4195,7 @@ async function askCoach(question){
     const parsed = parseCoachProposal(text);
     const msg = { role: 'assistant', content: parsed.visibleText || text };
     if(parsed.proposal) msg.proposal = parsed.proposal;
+    msg.t = Date.now();
     _coachHistory.push(msg);
     saveCoachHistory();
     renderCoachThread();
