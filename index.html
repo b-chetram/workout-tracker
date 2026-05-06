@@ -1911,6 +1911,23 @@ function blowoutThreshold(ex){
 }
 
 function getSug(ex){
+  // Coach-proposed in-session override wins over the algorithm. The
+  // override is cleared when a new session starts (confirmSession).
+  // Logged sets at the override weight automatically feed into next
+  // session's getSug via the existing weight-drop-recovery case, so
+  // propagation is one-way and natural.
+  const ov = (S && S.sessionOverrides && S.sessionOverrides[ex.id]) || null;
+  if(ov && typeof ov.weight === 'number' && S.active){
+    return {
+      txt:    '🤖 ' + ov.weight + ' ' + ex.unit,
+      go:     false,
+      val:    ov.weight,
+      reason: ov.reason || 'AI override applied this session',
+      micro:  false,
+      isAiOverride: true
+    };
+  }
+
   const h=getNonDeloadSessions(ex.id);
   if(!h.length) return{txt:ex.unit==='BW'?'Bodyweight':`Start: ${ex.sw} ${ex.unit}`,go:false,val:ex.sw,
     reason:`Target: ${ex.rep} reps per set`,micro:false};
@@ -2193,6 +2210,12 @@ function prefillW(exId,setIdx){
   const ex=findEx(exId);
   if(!ex)return 50;
 
+  // Coach-proposed session override (applied via <changes>
+  // set_weight_override). fromIdx records how many sets were already
+  // logged when the override was applied, so the override only affects
+  // sets the user hasn't done yet. ov.weight beats the prevSD carry.
+  const ov = (S && S.sessionOverrides && S.sessionOverrides[exId]) || null;
+
   // Mid-session weight drop: if the previous set in THIS session fell below
   // the bottom of the rep range, the weight is too heavy. Pre-fill 10% less.
   if(setIdx>0){
@@ -2204,12 +2227,20 @@ function prefillW(exId,setIdx){
         const dropped=Math.round(prevSD.weight*0.9/2.5)*2.5;
         return dropped;
       }
+      // Coach override beats prevSD carry, but only for sets the
+      // override was meant to cover.
+      if(ov && setIdx >= (ov.fromIdx||0)) return ov.weight;
       // Otherwise carry the same weight from the previous set
       return prevSD.weight;
     }
     // If previous set has weight but no reps, still carry the weight
-    if(prevSD&&prevSD.weight) return prevSD.weight;
+    if(prevSD&&prevSD.weight){
+      if(ov && setIdx >= (ov.fromIdx||0)) return ov.weight;
+      return prevSD.weight;
+    }
   }
+  // Set 0 (or no prevSD): override beats algorithm
+  if(ov) return ov.weight;
 
   const sv=getSug(ex).val;
   return isCurrentDeload()?deloadWeight(sv):sv;
@@ -2283,8 +2314,17 @@ function openSetPopup(exId,setIdx){
   const sug=getSug(ex);
   let tipHtml='';
 
+  // Priority 0: AI session override active for this exercise
+  const _ov = (S.sessionOverrides && S.sessionOverrides[exId]) || null;
+  if(_ov && setIdx >= (_ov.fromIdx || 0) && !alreadyDone){
+    tipHtml=`<div class="nip-tip" style="margin-bottom:14px;border-color:rgba(232,168,56,.4);background:rgba(232,168,56,.06)">
+      <div class="nip-lbl" style="color:#e8a838">🤖 Coach Override</div>
+      <div class="nip-txt">Use ${_ov.weight} ${ex.unit} for the rest of this session. ${_ov.reason ? esc(_ov.reason) : ''}</div>
+    </div>`;
+  }
+
   // Priority 1: Mid-session weight drop detection
-  if(setIdx>0 && !alreadyDone){
+  if(!tipHtml && setIdx>0 && !alreadyDone){
     const prevSD=S.setData[`${exId}-${setIdx-1}`];
     if(prevSD&&prevSD.reps){
       const bot=botRep(ex);
@@ -2510,6 +2550,10 @@ function confirmSession(){
   S.week=SESS.week;S.session=SESS.session;S.dayIdx=SESS.dayIdx;
   S.active=true;S.sessionDate=fullDate();S.lastDayId=DAYS[SESS.dayIdx].id;
   S.setData={};S.expandedEx=null;S.selectedEx={};
+  // Clear any AI-proposed weight overrides — they're session-scoped
+  // by design. Logged sets at last session's override weight have
+  // already informed getSug for this session.
+  S.sessionOverrides={};
   window._currentSong=getRandomSong();
   cancelRestTimer();
   requestWakeLock();
@@ -3731,18 +3775,37 @@ function parseCoachProposal(text){
     }
   }
 
+  // Validate "set_weight_override": session-scoped weight change for
+  // a specific exercise. Used mid-session when the user reports an
+  // unusually hard set and the coach wants to drop weight.
+  const cleanOverrides = {};
+  if(parsed && parsed.set_weight_override && typeof parsed.set_weight_override === 'object'){
+    for(const exId of Object.keys(parsed.set_weight_override)){
+      if(!findEx(exId)) continue; // exercise must exist
+      const o = parsed.set_weight_override[exId];
+      if(!o || typeof o.weight !== 'number') continue;
+      if(!isFinite(o.weight) || o.weight < 0 || o.weight > 1000) continue;
+      cleanOverrides[exId] = {
+        weight: o.weight,
+        reason: typeof o.reason === 'string' ? o.reason.slice(0, 120) : null
+      };
+    }
+  }
+
   const hasCats  = Object.keys(cleanCats).length > 0;
   const hasAdds  = Object.keys(cleanAdds).length > 0;
   const hasSongs = cleanSongs.length > 0;
-  if(!hasCats && !hasAdds && !hasSongs) return { visibleText: text.replace(m[0], '').trim(), proposal: null };
+  const hasOver  = Object.keys(cleanOverrides).length > 0;
+  if(!hasCats && !hasAdds && !hasSongs && !hasOver) return { visibleText: text.replace(m[0], '').trim(), proposal: null };
 
   const visibleText = text.replace(m[0], '').trim();
   const proposal = {
     summary: typeof parsed.summary === 'string' ? parsed.summary.slice(0, 200) : 'AI-proposed changes'
   };
-  if(hasCats)  proposal.categories    = cleanCats;
-  if(hasAdds)  proposal.add_exercises = cleanAdds;
-  if(hasSongs) proposal.add_songs     = cleanSongs;
+  if(hasCats)  proposal.categories           = cleanCats;
+  if(hasAdds)  proposal.add_exercises        = cleanAdds;
+  if(hasSongs) proposal.add_songs            = cleanSongs;
+  if(hasOver)  proposal.set_weight_override  = cleanOverrides;
   return { visibleText, proposal };
 }
 
@@ -3854,6 +3917,15 @@ function _proposalDiffText(proposal){
       lines.push('+ Music: ' + s.n + ' — ' + s.a);
     }
   }
+  if(proposal.set_weight_override){
+    for(const exId of Object.keys(proposal.set_weight_override)){
+      const ex = findEx(exId);
+      const ov = proposal.set_weight_override[exId];
+      const exName = ex ? ex.name : exId;
+      const unit   = ex ? (ex.unit || '') : '';
+      lines.push('⚖ ' + exName + ': use ' + ov.weight + ' ' + unit + ' for the rest of this session');
+    }
+  }
   return lines.join('\n');
 }
 
@@ -3907,6 +3979,24 @@ function applyCoachProposal(historyIdx){
     // Push them into the runtime catalog so the picker shows them now
     applyAddedExercises();
   }
+  // Apply any set_weight_override into the session-scoped store.
+  // Records logged-set count NOW so the override only affects sets
+  // the user hasn't done yet — already-logged sets keep their
+  // original weights.
+  if(msg.proposal.set_weight_override){
+    if(!S.sessionOverrides) S.sessionOverrides = {};
+    for(const exId of Object.keys(msg.proposal.set_weight_override)){
+      const ov = msg.proposal.set_weight_override[exId];
+      const loggedCount = Object.keys(S.setData || {})
+        .filter(k => k.indexOf(exId + '-') === 0).length;
+      S.sessionOverrides[exId] = {
+        weight:  ov.weight,
+        fromIdx: loggedCount,
+        reason:  ov.reason
+      };
+    }
+  }
+
   // Merge any newly-proposed songs into addedSongs
   if(Array.isArray(msg.proposal.add_songs) && msg.proposal.add_songs.length){
     const existingKeys = new Set(S.aiPrefs.addedSongs.map(s => ((s.n||'') + '|' + (s.a||'')).toLowerCase()));
@@ -3957,6 +4047,8 @@ function revertCoachPrefs(){
   }
   delete S.aiPrefs;
   S.aiUndoStack = [];
+  // Session weight overrides are AI-proposed too — clear them on Revert.
+  S.sessionOverrides = {};
   if(S.selectedEx) S.selectedEx = {};
   save();
   renderCoachPrefsBanner();
@@ -4162,13 +4254,16 @@ async function askCoach(question){
       '  },\n' +
       '  "add_songs": [\n' +
       '    { "name": "<track title>", "artist": "<artist>" }\n' +
-      '  ]\n' +
+      '  ],\n' +
+      '  "set_weight_override": {\n' +
+      '    "<exercise_id>": { "weight": <number>, "reason": "<short why>" }\n' +
+      '  }\n' +
       '}\n' +
       '</changes>\n' +
       'Use category IDs and exercise IDs EXACTLY as they appear in PROGRAM. ' +
-      'Only include fields you want to change. All three top-level keys ' +
-      '(categories, add_exercises, add_songs) are optional — include only ' +
-      'what you need. ' +
+      'Only include fields you want to change. All four top-level keys ' +
+      '(categories, add_exercises, add_songs, set_weight_override) are ' +
+      'optional — include only what you need. ' +
       'Boost = exercises to highlight and prefer in selection. ' +
       'add_exercises = NEW exercises to add to the catalog (use this for ' +
       'requests like "add quad-specific exercises" — propose real, safe, ' +
@@ -4178,6 +4273,14 @@ async function askCoach(question){
       'hype", "extend the playlist"). Pick mainstream tracks Deezer indexes ' +
       '(electronic / house / EDM / hip-hop). Limit 8 per proposal. Avoid ' +
       'tracks already in MUSIC CATALOG below. ' +
+      'set_weight_override = a session-scoped weight change applied to the ' +
+      'remaining sets of an exercise the user has STARTED but not finished. ' +
+      'Use this when the user asks "should I drop weight" mid-session, when ' +
+      'their first set indicates the prescribed weight is too heavy (e.g. ' +
+      'barely hit bottom of rep range with RIR 0), or when they fatigue ' +
+      'unexpectedly. The override clears at the start of the next session. ' +
+      'Already-logged sets keep their weights; only future sets in this ' +
+      'session see the new weight. ' +
       'Change at most 3 categories per proposal. For pure questions (no plan ' +
       'change requested), respond normally with no <changes> block.\n\n' +
       'CURRENT TRAINING DATA:\n' + buildCoachContext();
