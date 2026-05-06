@@ -251,6 +251,9 @@ input[type=number]::-webkit-inner-spin-button{-webkit-appearance:none}
 .coach-prefs-active{padding:10px 14px;background:rgba(232,168,56,.08);border:1px solid rgba(232,168,56,.3);border-radius:12px;margin:14px 0;display:flex;align-items:center;gap:10px;font-size:13px}
 .coach-prefs-active .summary{flex:1;color:rgba(255,255,255,.85)}
 .coach-prefs-revert{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.1);color:rgba(255,255,255,.85);border-radius:14px;padding:6px 12px;font-size:11px;font-weight:600;cursor:pointer}
+/* Per-exercise AI ask — opt-in token use */
+.ex-ai-btn{flex-shrink:0;background:rgba(232,168,56,.12);border:1px solid rgba(232,168,56,.3);color:#e8a838;border-radius:14px;padding:4px 10px;font-size:10px;font-weight:700;cursor:pointer;-webkit-tap-highlight-color:transparent;letter-spacing:.3px;line-height:1}
+.ex-ai-btn:active{background:rgba(232,168,56,.25)}
 </style>
 </head>
 <body>
@@ -2005,6 +2008,20 @@ function getSug(ex){
     }
   }
 
+  // CASE 3.5: All sets at top of range, but no other trigger fired
+  // (no RIR data and no matching prior session). Per Nippard, hitting
+  // top of range on every set IS the signal to add weight — don't
+  // make the user repeat the feat. Falls just below the higher-trust
+  // RIR/double-progression cases above so those still take priority
+  // when their data is available.
+  if(lMin>=top){
+    const newW=lastW+getInc(ex,false);
+    const rirNote = lastRir!=null ? ` (RIR ~${Math.round(lastRir)})` : '';
+    return{txt:`📈 Go up → ${newW} ${ex.unit}`,go:true,val:newW,
+      reason:`Hit ${top}+ reps on all sets last time${rirNote}. Time to add weight.`,
+      micro:false};
+  }
+
   // CASE 4: Stall detection (same weight, no rep improvement for 3+ sessions)
   // Within 1 rep of target → go up and start at the bottom of the range.
   // 2+ reps away → something else is the bottleneck, suggest plateau protocol.
@@ -2035,17 +2052,28 @@ function getSug(ex){
   }
 
   // CASE 4: Micro rep progression (Nippard style)
-  // Give specific per-set targets: beat each set by 1 rep.
-  // Works whether some or ALL sets are below target.
+  // Give specific per-set targets: beat each set by 1 rep, full stop.
+  // No clamp at top — if a previous set already hit top of range,
+  // the target is top+1 so the algorithm flags a weight bump on the
+  // following session (case 1 / 3.5). Without this stretch, hitting
+  // top stalls progression instead of triggering it.
   if(lMin>0 && lMin<top && lReps.filter(r=>r!==null).length===ex.sets){
     const targetReps=lReps.map(r=>{
       if(r===null) return '?';
-      if(r<top) return Math.min(r+1,top);
-      return r;
+      return r + 1;
     });
     const targetStr=targetReps.join('/');
+    // How many of last session's sets were at/above top of range?
+    const atTopCount = lReps.filter(r => r != null && r >= top).length;
+    let reason;
+    if(atTopCount > 0){
+      const remaining = ex.sets - atTopCount;
+      reason = `Hit top on ${atTopCount} of ${ex.sets} sets last time. Push the remaining ${remaining} to top to unlock a weight bump. Targets: ${targetStr}.`;
+    } else {
+      reason = `Target: ${targetStr} reps. Beat each set by 1.`;
+    }
     return{txt:`${lastW} ${ex.unit}`,go:false,val:lastW,
-      reason:`Target: ${targetStr} reps. Beat each set by 1.`,
+      reason,
       micro:true, targetReps};
   }
 
@@ -2273,10 +2301,21 @@ function openSetPopup(exId,setIdx){
   // Priority 2: Micro progression target
   if(!tipHtml && sug.micro && sug.targetReps){
     const setTarget = sug.targetReps[setIdx];
-    if(setTarget && typeof setTarget==='number'){
+    const lastReps = last && last.sets && last.sets[setIdx] ? last.sets[setIdx].reps : null;
+    const top = topRep(ex);
+    if(setTarget && typeof setTarget === 'number'){
+      let txt;
+      if(lastReps != null && lastReps >= top){
+        // Last time this set already hit top — frame as stretch goal
+        txt = `Push past ${top}: aim for ${setTarget}+ at ${sug.val} ${ex.unit}. Last time you hit ${lastReps}; beating it on every set tells the app to bump weight next session.`;
+      } else if(lastReps != null){
+        txt = `Aim for ${setTarget} reps at ${sug.val} ${ex.unit}. Beat last set's ${lastReps}.`;
+      } else {
+        txt = `Aim for ${setTarget} reps at ${sug.val} ${ex.unit}.`;
+      }
       tipHtml=`<div class="nip-tip" style="margin-bottom:14px">
         <div class="nip-lbl">🎯 Target This Set</div>
-        <div class="nip-txt">Aim for ${setTarget} reps at ${sug.val} ${ex.unit}. Beat your last set of ${last&&last.sets&&last.sets[setIdx]?last.sets[setIdx].reps:'?'} reps.</div>
+        <div class="nip-txt">${txt}</div>
       </div>`;
     }
   }
@@ -2890,7 +2929,7 @@ function render(){
           <div class="wbox" style="${(sug.go||isDeloadNow)?`border-color:${day.color}50;background:${day.color}10`:''}">
             <div class="wlbl" style="color:${(sug.go||isDeloadNow)?day.color:'#444'}">${targetLbl}</div>
             <div class="wval" style="color:${targetColor}">${targetTxt}</div>
-            ${targetSub?`<div class="wval2">${targetSub}</div>`:''}
+            ${targetSub?`<div class="wval2" style="display:flex;align-items:center;gap:8px"><span style="flex:1;min-width:0">${targetSub}</span><button class="ex-ai-btn" onclick="askCoachAboutExercise('${ex.id}')" title="Sanity-check this with AI">🤖 ask</button></div>`:''}
           </div>
         </div>
         ${altName?`<div class="alt-bar">
@@ -4218,6 +4257,27 @@ function askCoachCustom(){
   if(!v){ showToast('Type a question first'); return; }
   el.value = '';
   askCoach(v);
+}
+
+// Opt-in per-exercise AI assist. Fires ONE focused Groq call about
+// a specific lift instead of running the model on every render.
+// Reuses the existing coach sheet (system prompt + full context already
+// built per turn), so no new token plumbing — just opens the sheet
+// with a pre-loaded question and lets the user see the answer in
+// the running thread.
+function askCoachAboutExercise(exId){
+  const ex = findEx(exId);
+  if(!ex) return;
+  buzz(HAPTIC_SET);
+  openCoachSheet();
+  const last = (typeof getLastSess === 'function') ? getLastSess(exId) : null;
+  const lastSummary = last ? getLastSessSummary(last, ex) : 'no history yet';
+  const sug = getSug(ex);
+  const q = 'Quick sanity check on ' + ex.name + ' (target rep range ' + ex.rep + '): ' +
+            'last session was ' + lastSummary + '. ' +
+            'The deterministic algorithm suggests: ' + sug.txt + ' — ' + (sug.reason || '') + ' ' +
+            'Do you agree, or would you adjust the weight / reps for today? Be concise.';
+  askCoach(q);
 }
 
 // Enter sends; Shift+Enter inserts a newline.
