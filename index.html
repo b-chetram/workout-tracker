@@ -403,6 +403,7 @@ input[type=number]::-webkit-inner-spin-button{-webkit-appearance:none}
       </div>
       <input id="coach-key-input" class="coach-key" type="password" placeholder="Paste your gsk_... key" autocomplete="off" spellcheck="false">
       <button class="sheet-confirm" style="background:#5ec46a;color:#000;margin-top:12px" onclick="saveCoachKey()">Save Key</button>
+      <button class="coach-clear" style="margin-top:6px;width:100%" onclick="cancelKeyEntry()">Cancel</button>
     </div>
 
     <!-- CHAT (shown when key is saved) -->
@@ -424,6 +425,7 @@ input[type=number]::-webkit-inner-spin-button{-webkit-appearance:none}
         </div>
         <div id="coach-thread" class="coach-thread"></div>
       </div>
+      <button class="coach-clear" onclick="resetCoachKey()" style="margin-top:14px;font-size:10px;opacity:.6">Use my own API key</button>
     </div>
 
     <button class="sheet-cancel" onclick="closeCoachSheet()">Close</button>
@@ -3467,7 +3469,12 @@ const COACH_MODEL  = 'llama-3.3-70b-versatile';
 // lives in a public repo and the Groq free quota (30 req/min, 14k
 // req/day) could be drained by scrapers. localStorage value wins if
 // the user ever wants to override at runtime.
-const COACH_EMBEDDED_KEY = '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';
+// No embedded fallback. GitHub secret scanning kills committed keys
+// within hours, so the durable path is: user pastes their personal
+// key on first run via the key-entry form. localStorage on their
+// device → never enters the public repo → never gets scanned →
+// never auto-revoked.
+const COACH_EMBEDDED_KEY = '';
 
 function getCoachKey(){
   try{
@@ -3502,13 +3509,23 @@ function saveCoachKey(){
   document.getElementById('coach-chat-area').style.display = 'block';
   showToast('✅ Key saved');
 }
+// Show the key-entry form so the user can paste a personal key.
+// Personal keys persist in localStorage on this device (never in
+// the repo, so GitHub's scanner won't see them and Groq won't revoke
+// them automatically). This is the durable path when the embedded
+// fallback gets killed by secret scanning.
 function resetCoachKey(){
-  if(!confirm('Remove your saved API key?')) return;
-  clearCoachKey();
   document.getElementById('coach-key-row').style.display   = 'block';
   document.getElementById('coach-chat-area').style.display = 'none';
-  const thread = document.getElementById('coach-thread');
-  if(thread) thread.innerHTML = '';
+}
+
+// Back out of the key-entry form without saving — return to whatever
+// key was active (personal localStorage key if previously set,
+// otherwise the embedded fallback).
+function cancelKeyEntry(){
+  document.getElementById('coach-key-input').value = '';
+  document.getElementById('coach-key-row').style.display   = 'none';
+  document.getElementById('coach-chat-area').style.display = 'block';
 }
 
 // Build a comprehensive context the coach can ground its advice in.
