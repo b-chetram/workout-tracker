@@ -1571,6 +1571,49 @@ function save(){
   try{localStorage.setItem(KEY,JSON.stringify({S,DB}));}
   catch(e){showToast('⚠️ Storage full');}
 }
+
+// ── One-time deload migration ────────────────────────────────────────
+// Retroactively stamps existing session entries with deload:true/false.
+// Uses weight vs. nearest prior working session to infer deload status
+// for sessions in weeks marked in DB.deloadWeeks that lack the flag.
+// Idempotent: no-ops on entries that already have the flag.
+function _migrateDeloadFlags(){
+  try {
+    const SKIP = {skipped:1,feedback:1,deloadWeeks:1,notes:1};
+    const deloadWeeks = new Set(DB.deloadWeeks || []);
+    let changed = false;
+    for(const exId of Object.keys(DB)){
+      if(SKIP[exId] || !Array.isArray(DB[exId])) continue;
+      let lastWorkingMax = null; // highest weight seen in last non-deload session
+      for(const entry of DB[exId]){
+        if(entry.deload !== undefined){
+          // Already tagged — update reference weight if this was a working session
+          if(!entry.deload){
+            const ws=(entry.sets||[]).filter(s=>s&&s.weight).map(s=>s.weight);
+            if(ws.length) lastWorkingMax=Math.max(...ws);
+          }
+          continue;
+        }
+        const ws=(entry.sets||[]).filter(s=>s&&s.weight).map(s=>s.weight);
+        const maxW=ws.length?Math.max(...ws):null;
+        if(!deloadWeeks.has(entry.week)){
+          // Not in a tracked deload week → definitely working
+          entry.deload=false;
+          if(maxW!=null) lastWorkingMax=maxW;
+        } else if(lastWorkingMax!=null && maxW!=null && maxW >= lastWorkingMax*0.75){
+          // Weights ≥75% of prior working weight → this was a real session
+          entry.deload=false;
+          lastWorkingMax=maxW;
+        } else {
+          // Lighter than 75% of prior working weight → actual deload session
+          entry.deload=true;
+        }
+        changed=true;
+      }
+    }
+    if(changed) save();
+  } catch(e){}
+}
 function showToast(msg){
   const t=document.getElementById('toast');
   t.textContent=msg;t.style.opacity='1';
@@ -1782,7 +1825,15 @@ function getPrevSessions(id){
   return getHist(id).filter(e=>!(e.week===S.week&&e.session===S.session));
 }
 function getNonDeloadSessions(id){
-  return getPrevSessions(id).filter(e=>!isDeload(e.week));
+  return getPrevSessions(id).filter(e=>{
+    // Prefer the session-level flag set at log-time (accurate even when
+    // a deload ends mid-week and heavy sessions follow in the same week).
+    if(e.deload === true)  return false;
+    if(e.deload === false) return true;
+    // Fallback for old data logged before the per-session flag existed:
+    // use the week-level deloadWeeks list.
+    return !isDeload(e.week);
+  });
 }
 function getLastSess(id){
   const h=getPrevSessions(id);return h.length?h[h.length-1]:null;
@@ -2243,10 +2294,9 @@ function confirmDeloadDone(){
 
 function startDeload(){
   S.deloadActive = true;
-  // Track this week as deload immediately so light sessions are excluded
-  // from progression even if user forgets to confirm
-  if(!DB.deloadWeeks) DB.deloadWeeks = [];
-  if(!DB.deloadWeeks.includes(S.week)) DB.deloadWeeks.push(S.week);
+  // Do NOT stamp DB.deloadWeeks here — only confirmDeloadDone() does that.
+  // Individual sets logged during this flag are tagged deload:true at write
+  // time, so the week stamp is only needed for history display, not logic.
   save();
   showToast('🔋 Deload active. Using 50 to 60% weights.');
   render();
@@ -2483,8 +2533,10 @@ function confirmSet(){
   if(!DB[exId])DB[exId]=[];
   let entry=DB[exId].find(e=>e.week===S.week&&e.session===S.session);
   if(!entry){
+    // Tag the session at creation so progression ignores deload sets even
+    // when the deload ends mid-week and heavy sessions follow in the same week.
     entry={week:S.week,session:S.session,day:getExNativeDay(exId),date:todayStr(),
-           altIdx:ex.alt?getAltIdx(ex):null,sets:[]};
+           altIdx:ex.alt?getAltIdx(ex):null,deload:isCurrentDeload()?true:false,sets:[]};
     DB[exId].push(entry);
   }
   if(!entry.sets)entry.sets=[];
@@ -2976,7 +3028,7 @@ function render(){
       const histHtml=hist.length
         ?hist.map(h=>{
             const al=h.altIdx!==undefined&&ex.alt?` · ${ex.alt[h.altIdx]}`:'';
-            const isDeloadSess=isDeload(h.week);
+            const isDeloadSess=h.deload===true||(h.deload===undefined&&isDeload(h.week));
             const sl=h.sets&&h.sets.length
               ?h.sets.filter(Boolean).map((s,i)=>`S${i+1}: ${s.weight}${s.reps?'×'+s.reps:''}`).join('  ')
               :'–';
@@ -3230,7 +3282,7 @@ function renderHistory(){
         </div>
         ${display.map(h=>{
           const al=h.altIdx!==undefined&&ex.alt?` · ${ex.alt[h.altIdx]}`:'';
-          const dl=isDeload(h.week)?' 🔋':'';
+          const dl=(h.deload===true||(h.deload===undefined&&isDeload(h.week)))?' 🔋':'';
           const sl=h.sets&&h.sets.length
             ?h.sets.filter(Boolean).map((s,i)=>`S${i+1}: ${s.weight} ${ex.unit}${s.reps?'×'+s.reps:''}`).join('  ')
             :'–';
@@ -3698,7 +3750,8 @@ function buildCoachContext(){
       }).join(' | ');
 
       // Progression status — analyse last 3 non-deload sessions
-      const ndSess = allSess.filter(e => !(DB.deloadWeeks||[]).includes(e.week));
+      const ndSess = allSess.filter(e =>
+        e.deload===true ? false : e.deload===false ? true : !isDeload(e.week));
       const last3 = ndSess.slice(-3);
       let status = '';
       if(last3.length >= 2 && ex){
@@ -4050,6 +4103,20 @@ const COACH_UNDO_MAX = 5;
 function applyCoachProposal(historyIdx){
   const msg = _coachHistory[historyIdx];
   if(!msg || !msg.proposal) return;
+
+  // Extra confirmation when the proposal removes exercises — this is
+  // the most destructive action and the Apply card alone isn't enough.
+  if(Array.isArray(msg.proposal.remove_exercises) && msg.proposal.remove_exercises.length){
+    const names = msg.proposal.remove_exercises.map(id=>{
+      const ex = findEx(id); return ex ? ex.name : id;
+    }).join('\n• ');
+    const ok = confirm(
+      'Remove ' + msg.proposal.remove_exercises.length + ' exercise(s) from your program?\n\n• ' +
+      names + '\n\nThey will disappear as selectable options but your logged history for them is kept. ' +
+      'You can undo this with the Undo button in the Coach banner.'
+    );
+    if(!ok) return;
+  }
 
   // Snapshot the CURRENT aiPrefs (deep-cloned) onto the undo stack
   // before mutating, so a later "Undo last" can restore exactly this
@@ -4504,6 +4571,9 @@ function coachInputKey(e){
 // INIT
 // ══════════════════════════════════════════════════════════════════════
 load();
+// Retroactively tag legacy session entries with per-session deload flag.
+// Must run after load() so DB is populated; idempotent on already-tagged data.
+_migrateDeloadFlags();
 // Reapply AI-added exercises and songs into the runtime state before
 // first render so they show up in pickers + the song shuffle pool
 // immediately on reload.
