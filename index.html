@@ -344,21 +344,8 @@ input[type=number]::-webkit-inner-spin-button{-webkit-appearance:none}
       <button class="sheet-cancel" onclick="closeSessSheet()">Cancel</button>
     </div>
 
-    <!-- Step 2: coach check-in — always shown before session actually starts -->
-    <div id="sess-step2" style="display:none;margin-top:16px">
-      <div style="text-align:center;padding:4px 0 14px">
-        <div style="font-size:20px;font-weight:800;margin-bottom:6px">Ready to train? 💪</div>
-        <div style="font-size:14px;color:rgba(255,255,255,.4);line-height:1.5">Any injuries, soreness, or specific<br>focus for today?</div>
-      </div>
-      <button onclick="openPreSessionCoach()"
-        style="width:100%;border-radius:14px;padding:15px;font-size:16px;font-weight:700;background:#1c2a1c;color:#5ec46a;border:1.5px solid #2a3a2a;margin-bottom:10px;display:block">
-        💬 Yes — chat with Coach first
-      </button>
-      <button id="sess-start-btn" class="sheet-confirm" onclick="confirmSession()">
-        Nope, let's go →
-      </button>
-      <button class="sheet-cancel" onclick="showSessStep1()">← Change day / week</button>
-    </div>
+    <!-- Step 2: coach check-in — content injected by showSessStep2() -->
+    <div id="sess-step2" style="display:none;margin-top:16px"></div>
   </div>
 </div>
 
@@ -444,6 +431,11 @@ input[type=number]::-webkit-inner-spin-button{-webkit-appearance:none}
       </div>
       <button class="coach-clear" onclick="resetCoachKey()" style="margin-top:14px;font-size:10px;opacity:.6">Use my own API key</button>
     </div>
+
+    <!-- Shown only when opened from the pre-session check-in flow AND
+         at least one proposal has been applied. Lets the user start
+         the session without having to navigate back through step 2. -->
+    <div id="coach-presession-footer" style="display:none"></div>
 
     <button class="sheet-cancel" onclick="closeCoachSheet()">Close</button>
   </div>
@@ -2840,10 +2832,64 @@ function showSessStep1(){
   if(s2)s2.style.display='none';
 }
 function showSessStep2(){
-  const s1=document.getElementById('sess-step1');
-  const s2=document.getElementById('sess-step2');
-  if(s1)s1.style.display='none';
-  if(s2)s2.style.display='block';
+  const s1 = document.getElementById('sess-step1');
+  const s2 = document.getElementById('sess-step2');
+  if(s1) s1.style.display = 'none';
+  if(!s2) return;
+  s2.style.display = 'block';
+
+  // Check if the coach set any session adjustments during the pre-session chat
+  const adj = S.sessionAdjustments || {};
+  const skipList = Array.isArray(adj.skipToday) ? adj.skipToday : [];
+  const selMap   = (adj.selectToday && typeof adj.selectToday === 'object') ? adj.selectToday : {};
+  const hasSkips = skipList.length > 0;
+  const hasSels  = Object.keys(selMap).length > 0;
+  const hasAdjustments = hasSkips || hasSels;
+
+  if(hasAdjustments){
+    // Build a readable summary of what the coach set up
+    const lines = [];
+    if(hasSkips){
+      const names = skipList.map(id => { const ex = findEx(id); return ex ? ex.name : id; });
+      lines.push('Skipping: ' + names.join(', '));
+    }
+    for(const catId of Object.keys(selMap)){
+      const ids = selMap[catId] || [];
+      if(!ids.length) continue;
+      const names = ids.map(id => { const ex = findEx(id); return ex ? ex.name : id; });
+      lines.push('Focus: ' + names.join(', '));
+    }
+    const summaryRows = lines.map(l =>
+      `<div style="font-size:12px;color:#5ec46a;line-height:1.6">✓ ${_esc(l)}</div>`
+    ).join('');
+
+    s2.innerHTML =
+      '<div style="text-align:center;padding:4px 0 10px">' +
+        '<div style="font-size:20px;font-weight:800;margin-bottom:8px">Ready to train 💪</div>' +
+        '<div style="background:#0d1e0d;border:1px solid #2a3a2a;border-radius:12px;padding:11px 13px;text-align:left">' +
+          '<div style="font-size:10px;color:#5ec46a;font-weight:800;text-transform:uppercase;letter-spacing:1.2px;margin-bottom:6px">Coach adjustments active</div>' +
+          summaryRows +
+        '</div>' +
+      '</div>' +
+      '<button onclick="openPreSessionCoach()" style="width:100%;border-radius:14px;padding:13px;font-size:15px;font-weight:700;background:#1a2620;color:#5ec46a;border:1.5px solid #2a3a2a;margin-bottom:10px;display:block;cursor:pointer;-webkit-tap-highlight-color:transparent">' +
+        '💬 Adjust more' +
+      '</button>' +
+      '<button class="sheet-confirm" onclick="confirmSession()" style="background:#5ec46a;color:#000">' +
+        'Start with these changes →' +
+      '</button>' +
+      '<button class="sheet-cancel" onclick="showSessStep1()">← Change day / week</button>';
+  } else {
+    s2.innerHTML =
+      '<div style="text-align:center;padding:4px 0 14px">' +
+        '<div style="font-size:20px;font-weight:800;margin-bottom:6px">Ready to train? 💪</div>' +
+        '<div style="font-size:14px;color:rgba(255,255,255,.4);line-height:1.5">Any injuries, soreness, or specific<br>focus for today?</div>' +
+      '</div>' +
+      '<button onclick="openPreSessionCoach()" style="width:100%;border-radius:14px;padding:15px;font-size:16px;font-weight:700;background:#1c2a1c;color:#5ec46a;border:1.5px solid #2a3a2a;margin-bottom:10px;display:block;cursor:pointer;-webkit-tap-highlight-color:transparent">' +
+        '💬 Yes — chat with Coach first' +
+      '</button>' +
+      '<button id="sess-start-btn" class="sheet-confirm" onclick="confirmSession()">Nope, let\'s go →</button>' +
+      '<button class="sheet-cancel" onclick="showSessStep1()">← Change day / week</button>';
+  }
 }
 function sessGoToCheckIn(){
   // Don't start yet — show the coach check-in screen first so the
@@ -3801,6 +3847,10 @@ function openCoachSheet(){
   const hasKey  = !!getCoachKey();
   document.getElementById('coach-key-row').style.display   = hasKey ? 'none'  : 'block';
   document.getElementById('coach-chat-area').style.display = hasKey ? 'block' : 'none';
+  // Always reset the pre-session footer on open; _updatePresessionFooter
+  // will re-show it if warranted (i.e. coming from pre-session AND a
+  // proposal was already applied earlier in this same open).
+  _updatePresessionFooter();
   overlay.classList.remove('hidden');
   if(hasKey){
     renderCoachPrefsBanner();
@@ -3844,10 +3894,53 @@ function closeCoachSheet(){
     }
     document.getElementById('sess-warn').style.display = S.active ? 'block' : 'none';
     syncSessSheet();
-    showSessStep2(); // return to check-in step, not the day picker
+    showSessStep2(); // dynamically renders adjustments summary if any were applied
     document.getElementById('sess-overlay').classList.remove('hidden');
   }
 }
+
+// Called by the "Start Session →" button inside the coach overlay
+// when the user has applied coach adjustments during the pre-session flow.
+// Skips the trip back to step 2 and starts the session immediately.
+function startSessionFromCoach(){
+  // Restore SESS snapshot so confirmSession() uses the right week/session/day
+  if(_preSessionSess){
+    SESS = {week:_preSessionSess.week, session:_preSessionSess.session, dayIdx:_preSessionSess.dayIdx};
+    _preSessionSess = null;
+  }
+  _preSessionMode = false;
+  document.getElementById('coach-overlay').classList.add('hidden');
+  confirmSession();
+}
+
+// Render (or hide) the "Start Session →" shortcut at the bottom of the
+// coach sheet. Called after every proposal apply and on coach open.
+function _updatePresessionFooter(){
+  const footer = document.getElementById('coach-presession-footer');
+  if(!footer) return;
+  if(!_preSessionMode){
+    footer.style.display = 'none';
+    footer.innerHTML = '';
+    return;
+  }
+  // Show the start button only once the user has actually applied something
+  const adj = S.sessionAdjustments || {};
+  const hasSkips = Array.isArray(adj.skipToday) && adj.skipToday.length > 0;
+  const hasSels  = adj.selectToday && Object.keys(adj.selectToday).length > 0;
+  if(!hasSkips && !hasSels){
+    footer.style.display = 'none';
+    footer.innerHTML = '';
+    return;
+  }
+  footer.style.display = 'block';
+  footer.innerHTML =
+    '<div style="margin-top:16px;padding:14px 16px;background:#0d1e0d;border-radius:14px;border:1.5px solid #2a3a2a;text-align:center">' +
+      '<div style="font-size:11px;color:#5ec46a;font-weight:800;text-transform:uppercase;letter-spacing:1.2px;margin-bottom:10px">✓ Adjustments ready</div>' +
+      '<button onclick="startSessionFromCoach()" style="width:100%;border-radius:12px;padding:15px;font-size:17px;font-weight:800;background:#5ec46a;color:#000;border:none;cursor:pointer;margin-bottom:8px;-webkit-tap-highlight-color:transparent">Start Session →</button>' +
+      '<button onclick="closeCoachSheet()" style="width:100%;border-radius:12px;padding:11px;font-size:14px;font-weight:700;background:rgba(255,255,255,.07);color:rgba(255,255,255,.55);border:none;cursor:pointer;-webkit-tap-highlight-color:transparent">← Keep chatting / back to setup</button>' +
+    '</div>';
+}
+
 function saveCoachKey(){
   const v = document.getElementById('coach-key-input').value.trim();
   if(!v){ showToast('⚠️ Enter your API key'); return; }
@@ -4570,6 +4663,10 @@ function applyCoachProposal(historyIdx){
   renderCoachThread();
   if(typeof render === 'function') render();
   showToast('🤖 Coach changes applied');
+  // If this proposal was applied during the pre-session check-in flow,
+  // reveal the "Start Session →" shortcut so the user doesn't have to
+  // close the coach and navigate back through step 2.
+  _updatePresessionFooter();
 }
 
 function dismissCoachProposal(historyIdx){
