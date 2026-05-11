@@ -4170,8 +4170,9 @@ function buildCoachContext(){
       const allSess = (DB[exId] || []).filter(e => e && e.sets && e.sets.length > 0);
       if(allSess.length === 0) continue;
 
-      // Last 5 sessions for display — annotate pump/light/deload sessions
-      const recent = allSess.slice(-5);
+      // Last 3 sessions for display (reduced from 5 to keep context lean)
+      // — annotate pump/light/deload sessions
+      const recent = allSess.slice(-3);
       const histStr = recent.map(e => {
         const sets = (e.sets || []).filter(s => s).map(s => {
           const r = (s.rir == null || s.rir === '') ? '?' : s.rir;
@@ -4227,9 +4228,8 @@ function buildCoachContext(){
 
       const sug = ex ? getSug(ex) : null;
       const sugStr = sug ? ' | alg.suggests: ' + sug.val + (unit?' '+unit:'') + (sug.go?' 📈':'') + (sug.micro?' (micro)':'') : '';
-      const meta = getMeta(exId);
-      const metaStr = meta ? ' [muscles:' + meta.primary.join('+') + ' | ' + meta.mechanics.join(',') + ']' : '';
-      lines.push('- ' + exName + (unit?' ('+unit+')':'') + (top?(' '+bot+'-'+top+' rep range'):'') + metaStr + status + sugStr);
+      // Muscle metadata already present in PROGRAM section above — omit here to save tokens.
+      lines.push('- ' + exName + (unit?' ('+unit+')':'') + (top?(' '+bot+'-'+top+' rep range'):'') + status + sugStr);
       lines.push('  ' + histStr);
       logged++;
     }
@@ -4270,10 +4270,11 @@ function buildCoachContext(){
     }
   }
 
-  // 6. MUSIC CATALOG ----------------------------------------------
-  // So the coach can extend the playlist on request without proposing
-  // duplicates. Compact one-liners.
-  if(typeof SONGS !== 'undefined' && SONGS.length){
+  // 6. MUSIC CATALOG — only include when the conversation mentions music/songs
+  // to avoid burning tokens on every non-music request.
+  const lastUserMsg = (_coachHistory || []).slice().reverse().find(m => m.role === 'user');
+  const musicKeywords = /\b(song|music|track|playlist|add.{0,8}song|artist|album|listen)\b/i;
+  if(typeof SONGS !== 'undefined' && SONGS.length && lastUserMsg && musicKeywords.test(lastUserMsg.content)){
     lines.push('\n=== MUSIC CATALOG (songs already in shuffle pool) ===');
     for(const s of SONGS){
       const tag = s._aiAdded ? ' 🤖added' : '';
@@ -4300,12 +4301,45 @@ function _findCatById(catId){
 
 // Extract a <changes>{...}</changes> JSON proposal from coach text.
 // Returns { visibleText, proposal } where proposal is null if none/invalid.
+// Tries multiple extraction strategies so the proposal card appears even
+// when the model uses markdown fences or the response is truncated.
 function parseCoachProposal(text){
   if(!text) return { visibleText: text, proposal: null };
-  const m = text.match(/<changes>\s*([\s\S]*?)\s*<\/changes>/i);
-  if(!m) return { visibleText: text, proposal: null };
+
+  let jsonStr = null;
+  let fullMatch = null; // the string to strip from visible text
+
+  // Strategy 1 (primary): explicit <changes>...</changes> XML tags
+  const xmlMatch = text.match(/<changes>\s*([\s\S]*?)\s*<\/changes>/i);
+  if(xmlMatch){ jsonStr = xmlMatch[1]; fullMatch = xmlMatch[0]; }
+
+  // Strategy 2: markdown code fence (```json ... ``` or ``` ... ```)
+  // Llama sometimes wraps JSON in fences instead of the requested tags.
+  if(!jsonStr){
+    const fenceMatch = text.match(/```(?:json)?\s*(\{[\s\S]*?\})\s*```/i);
+    if(fenceMatch){ jsonStr = fenceMatch[1]; fullMatch = fenceMatch[0]; }
+  }
+
+  // Strategy 3: truncated response — model started a <changes> block but
+  // the response was cut off before </changes>. Try to parse whatever JSON
+  // we have; JSON.parse will reject it if it's genuinely incomplete.
+  if(!jsonStr){
+    const openTag = text.search(/<changes>/i);
+    if(openTag >= 0){
+      const braceStart = text.indexOf('{', openTag);
+      if(braceStart >= 0){ jsonStr = text.slice(braceStart); fullMatch = text.slice(openTag); }
+    }
+  }
+
+  if(!jsonStr) return { visibleText: text, proposal: null };
+
   let parsed = null;
-  try { parsed = JSON.parse(m[1]); } catch(e){ return { visibleText: text, proposal: null }; }
+  try { parsed = JSON.parse(jsonStr); } catch(e){
+    // Last-ditch: strip trailing incomplete key/value and try again
+    const clean = jsonStr.replace(/,?\s*"[^"]*"\s*:\s*[^,}\]]*$/, '').replace(/,\s*$/, '');
+    try { parsed = JSON.parse(clean + (clean.includes('[') && !clean.includes(']') ? ']' : '') + (clean.split('{').length > clean.split('}').length ? '}' : '')); }
+    catch(e2){ return { visibleText: text, proposal: null }; }
+  }
 
   // Validate + sanitize against the real catalog. Silently drop any
   // unknown category IDs or out-of-range values.
@@ -4443,9 +4477,9 @@ function parseCoachProposal(text){
   const hasSelectToday = Object.keys(cleanSelectToday).length > 0;
   const hasSessionTag  = !!cleanSessionTag;
   if(!hasCats && !hasAdds && !hasSongs && !hasRemove && !hasSkipToday && !hasSelectToday && !hasSessionTag)
-    return { visibleText: text.replace(m[0], '').trim(), proposal: null };
+    return { visibleText: fullMatch ? text.replace(fullMatch, '').trim() : text, proposal: null };
 
-  const visibleText = text.replace(m[0], '').trim();
+  const visibleText = fullMatch ? text.replace(fullMatch, '').trim() : text;
   const proposal = {
     summary: typeof parsed.summary === 'string' ? parsed.summary.slice(0, 200) : 'AI-proposed changes'
   };
@@ -5082,12 +5116,16 @@ async function askCoach(question){
       '110lb showed 10/10/7 — the set 3 drop is a fatigue flag"). Under 280 words unless ' +
       'a detailed breakdown is explicitly requested. No generic disclaimers. No fluff.\n\n' +
 
-      '━━ WHEN TO APPEND A <changes> BLOCK ━━\n' +
-      'Append when: (1) user asks to add/swap/remove an exercise PERMANENTLY, (2) user asks to ' +
-      'adjust category limits, (3) user asks to add songs, (4) user describes an injury or asks ' +
-      'to skip/focus on specific muscles TODAY (use skip_today / select_today — ephemeral), ' +
-      '(5) user asks to focus on specific exercises this session.\n' +
-      'For analysis, general advice, or questions — text only, no block.\n\n' +
+      '━━ CRITICAL — <changes> BLOCK RULES ━━\n' +
+      'You MUST append a <changes> block (no exceptions) whenever the user wants:\n' +
+      '  • Anything about TODAY\'s session — pump day, easier workout, skip something, focus on a muscle, injury/soreness\n' +
+      '  • Any permanent program change — add/swap/remove exercise, adjust category limits\n' +
+      '  • Music additions\n' +
+      'If you give advice about modifying the workout WITHOUT a <changes> block, the app CANNOT apply it.\n' +
+      'Text-only is ONLY correct for pure analysis questions with zero action (e.g. "how am I progressing?").\n' +
+      'When in doubt — include the block. The user taps Apply to decide whether to use it.\n\n' +
+      'Output format: write your explanation text FIRST, then append the block at the end.\n' +
+      'Do NOT wrap the JSON in markdown fences (```). Use ONLY the <changes>...</changes> tags.\n\n' +
       'Schema (all top-level keys optional — include only what changes):\n' +
       '<changes>\n' +
       '{\n' +
@@ -5145,15 +5183,31 @@ async function askCoach(question){
 
     if(!resp.ok){
       const errText = await resp.text();
-      let msg = 'Error ' + resp.status;
-      try { const j = JSON.parse(errText); if(j.error && j.error.message) msg = j.error.message; } catch(e){}
+      let rawMsg = 'Error ' + resp.status;
+      let errType = '';
+      try {
+        const j = JSON.parse(errText);
+        if(j.error && j.error.message) rawMsg = j.error.message;
+        if(j.error && j.error.code)    errType = j.error.code;
+      } catch(e){}
+      // Translate Groq API errors into friendly readable messages
+      let friendlyMsg = rawMsg;
+      if(resp.status === 429 || errType === 'rate_limit_exceeded'){
+        friendlyMsg = '⏱ Groq rate limit hit — wait 15 seconds and try again. (Free tier: 30 req/min)';
+      } else if(errType === 'context_length_exceeded'){
+        friendlyMsg = '📏 Message too long for the AI. Try clearing the chat and starting fresh.';
+      } else if(resp.status === 401){
+        friendlyMsg = '🔑 Invalid API key — tap "Use my own API key" to update it.';
+      } else if(resp.status >= 500){
+        friendlyMsg = '🔧 Groq server error — try again in a moment.';
+      }
       // Roll back the user turn so retry doesn't double-send it
       _coachHistory.pop();
       saveCoachHistory();
       renderCoachThread();
       const thread = document.getElementById('coach-thread');
       if(thread){
-        thread.insertAdjacentHTML('beforeend', '<div class="coach-msg-row assistant"><div class="coach-err">' + _esc(msg) + '</div></div>');
+        thread.insertAdjacentHTML('beforeend', '<div class="coach-msg-row assistant"><div class="coach-err">' + _esc(friendlyMsg) + '</div></div>');
         requestAnimationFrame(()=>{ thread.scrollTop = thread.scrollHeight; });
         document.getElementById('coach-thread-wrap').style.display = 'block';
       }
@@ -5185,7 +5239,9 @@ async function askCoach(question){
     renderCoachThread();
     const thread = document.getElementById('coach-thread');
     if(thread){
-      thread.insertAdjacentHTML('beforeend', '<div class="coach-msg-row assistant"><div class="coach-err">' + _esc(e && e.message ? e.message : 'Network error') + '</div></div>');
+      let netMsg = '🌐 Network error — check your connection and try again.';
+      if(e && e.message && e.message.toLowerCase().includes('json')) netMsg = '⚠️ The AI returned an unexpected response. Please try again.';
+      thread.insertAdjacentHTML('beforeend', '<div class="coach-msg-row assistant"><div class="coach-err">' + _esc(netMsg) + '</div></div>');
       requestAnimationFrame(()=>{ thread.scrollTop = thread.scrollHeight; });
       document.getElementById('coach-thread-wrap').style.display = 'block';
     }
