@@ -1530,23 +1530,44 @@ let PU={exId:null,setIdx:null,editing:false,rir:null};
 let SESS={week:1,session:1,dayIdx:0};
 
 // ══════════════════════════════════════════════════════════════════════
+// SEED DATA — embedded training history snapshot (exported 2026-05-11).
+// Applied only when localStorage has no existing data (new device /
+// fresh install). Existing local data is never touched.
+// ══════════════════════════════════════════════════════════════════════
+const SEED_DATA = {"S":{"week":4,"session":6,"dayIdx":0,"active":true,"sessionDate":"Sun, May 10","lastDayId":"push","setData":{"tri_oh-0":{"weight":60,"reps":11,"rir":0},"tri_oh-1":{"weight":60,"reps":9,"rir":0},"tri_oh-2":{"weight":55,"reps":9,"rir":0}},"expandedEx":null,"selectedEx":{},"deload":{"lastWeek":4,"postponeCount":0},"deloadActive":false},"DB":{"ohp":[{"week":1,"session":1,"day":"push","date":"Apr 17","altIdx":0,"sets":[{"weight":115,"reps":10,"rir":null}]},{"week":2,"session":1,"day":"push","date":"Apr 21","altIdx":1,"sets":[{"weight":115,"reps":6,"rir":1},{"weight":115,"reps":6,"rir":0},{"weight":115,"reps":6,"rir":0}]},{"week":4,"session":1,"day":"push","date":"May 2","altIdx":0,"sets":[{"weight":115,"reps":7,"rir":1},{"weight":115,"reps":7,"rir":2},{"weight":115,"reps":6,"rir":0}]},{"week":4,"session":5,"day":"push","date":"May 10","altIdx":1,"sets":[{"weight":115,"reps":7,"rir":0},{"weight":115,"reps":7,"rir":0},{"weight":115,"reps":7,"rir":0}]}],"skipped":[{"week":1,"session":3,"dayId":"legs","dayLabel":"LEGS","date":"Apr 21","fullDate":"Tue, Apr 21","iso":"2026-04-21T16:09:58.159Z","category":"injury","reason":"Calf muscle"},{"week":2,"session":2,"dayId":"pull","dayLabel":"PULL","date":"Apr 27","fullDate":"Mon, Apr 27","iso":"2026-04-27T16:08:51.748Z","category":"other","reason":"Not actually skipping I did a hotel pull and push day when traveling"}],"feedback":{"W1S2":{"pump":1,"sore":0,"energy":1,"dayId":"pull","date":"Apr 20"},"W2S1":{"pump":1,"sore":0,"energy":2,"dayId":"push","date":"Apr 21"}},"deloadWeeks":[4],"notes":{"W2S1_push":"Baseball abs 30lbs 12x each side","W3S1_push":"Abs - leg raises 3x12","W3S2_pull":"Hammer cable rope bicep curls - 90lbs 10 reps, 80lbs 9 reps, 70lbs 10 reps","W4S5_pull":"140 lbs floor laying face pulls 10 reps, 9 reps, 9 reps \n30 lbs abb abductor swings 3x12 reps"},"lat_pull":[{"week":1,"session":2,"day":"pull","date":"Apr 20","altIdx":null,"sets":[{"weight":175,"reps":12,"rir":2},{"weight":175,"reps":12,"rir":1},{"weight":175,"reps":9,"rir":0}]},{"week":4,"session":2,"day":"pull","date":"May 5","altIdx":null,"sets":[{"weight":105,"reps":12,"rir":3},{"weight":105,"reps":12,"rir":2},{"weight":105,"reps":12,"rir":2}]},{"week":4,"session":5,"day":"pull","date":"May 8","altIdx":null,"sets":[{"weight":175,"reps":12,"rir":2},{"weight":175,"reps":10,"rir":0},{"weight":175,"reps":8,"rir":0}]}],"db_row":[{"week":1,"session":2,"day":"pull","date":"Apr 20","altIdx":null,"sets":[{"weight":70,"reps":12,"rir":1},{"weight":70,"reps":10,"rir":0},{"weight":70,"reps":9,"rir":0}]},{"week":4,"session":2,"day":"pull","date":"May 5","altIdx":null,"sets":[{"weight":45,"reps":12,"rir":2},{"weight":45,"reps":12,"rir":3},{"weight":45,"reps":12,"rir":2}]}],"inc_curl":[{"week":1,"session":2,"day":"pull","date":"Apr 20","altIdx":null,"sets":[{"weight":30,"reps":9,"rir":1},{"weight":30,"reps":7,"rir":0},{"weight":25,"reps":10,"rir":0}]},{"week":4,"session":2,"day":"pull","date":"May 5","altIdx":null,"sets":[{"weight":45,"reps":8,"rir":0},{"weight":30,"reps":10,"rir":0},{"weight":30,"reps":8,"rir":0}]}],"ham_curl":[{"week":1,"session":2,"day":"pull","date":"Apr 20","altIdx":null,"sets":[{"weight":25,"reps":10,"rir":1},{"weight":25,"reps":9,"rir":0},{"weight":25,"reps":10,"rir":0}]},{"week":3,"session":2,"day":"pull","date":"Apr 30","altIdx":null,"sets":[{"weight":25,"reps":7,"rir":0},{"weight":20,"reps":10,"rir":0}]},{"week":4,"session":5,"day":"pull","date":"May 8","altIdx":null,"sets":[{"weight":25,"reps":8,"rir":0},{"weight":25,"reps":8,"rir":0},{"weight":25,"reps":8,"rir":null}]}],"face_pull":[{"week":1,"session":2,"day":"pull","date":"Apr 20","altIdx":null,"sets":[{"weight":65,"reps":20,"rir":3},{"weight":65,"reps":20,"rir":3},{"weight":65,"reps":20,"rir":3}]},{"week":3,"session":2,"day":"pull","date":"Apr 30","altIdx":null,"sets":[{"weight":70,"reps":20,"rir":3},{"weight":70,"reps":20,"rir":3},{"weight":70,"reps":20,"rir":1}]},{"week":4,"session":2,"day":"pull","date":"May 5","altIdx":null,"sets":[{"weight":45,"reps":20,"rir":3},{"weight":45,"reps":20,"rir":3},{"weight":45,"reps":20,"rir":3}]}],"cable_fly":[{"week":2,"session":1,"day":"push","date":"Apr 21","altIdx":null,"sets":[{"weight":35,"reps":15,"rir":2},{"weight":35,"reps":15,"rir":3},{"weight":35,"reps":15,"rir":2}]},{"week":3,"session":1,"day":"push","date":"Apr 28","altIdx":null,"sets":[{"weight":40,"reps":12,"rir":1},{"weight":40,"reps":9,"rir":0},{"weight":35,"reps":12,"rir":0}]},{"week":4,"session":5,"day":"push","date":"May 10","altIdx":null,"sets":[{"weight":35,"reps":15,"rir":2},{"weight":35,"reps":15,"rir":0},{"weight":35,"reps":15,"rir":0}]}],"lat_cable":[{"week":2,"session":1,"day":"push","date":"Apr 21","altIdx":null,"sets":[{"weight":20,"reps":15,"rir":1},{"weight":20,"reps":12,"rir":1},{"weight":20,"reps":12,"rir":0}]},{"week":3,"session":1,"day":"push","date":"Apr 28","altIdx":null,"sets":[{"weight":20,"reps":15,"rir":2},{"weight":20,"reps":13,"rir":1},{"weight":20,"reps":13,"rir":0}]},{"week":4,"session":1,"day":"push","date":"May 2","altIdx":null,"sets":[{"weight":20,"reps":15,"rir":2},{"weight":20,"reps":14,"rir":0},{"weight":20,"reps":15,"rir":0}]},{"week":4,"session":3,"day":"push","date":"May 6","altIdx":null,"sets":[{"weight":20,"reps":15,"rir":1},{"weight":20,"reps":15,"rir":1},{"weight":20,"reps":12,"rir":0}]},{"week":4,"session":5,"day":"push","date":"May 10","altIdx":null,"sets":[{"weight":20,"reps":15,"rir":2},{"weight":20,"reps":15,"rir":0},{"weight":20,"reps":14,"rir":0}]}],"skull":[{"week":2,"session":1,"day":"push","date":"Apr 21","altIdx":null,"sets":[{"weight":50,"reps":8,"rir":1},{"weight":50,"reps":10,"rir":1},{"weight":50,"reps":11,"rir":0}]}],"tri_oh":[{"week":2,"session":1,"day":"push","date":"Apr 21","altIdx":null,"sets":[{"weight":90,"reps":7,"rir":0},{"weight":80,"reps":8,"rir":0},{"weight":60,"reps":11,"rir":0}]},{"week":4,"session":1,"day":"push","date":"May 2","altIdx":null,"sets":[{"weight":60,"reps":12,"rir":0},{"weight":60,"reps":10,"rir":0}]},{"week":4,"session":3,"day":"push","date":"May 6","altIdx":null,"sets":[{"weight":60,"reps":12,"rir":0},{"weight":60,"reps":10,"rir":0},{"weight":50,"reps":10,"rir":0}]},{"week":4,"session":6,"day":"push","date":"May 10","altIdx":null,"sets":[{"weight":60,"reps":11,"rir":0},{"weight":60,"reps":9,"rir":0},{"weight":55,"reps":9,"rir":0}]}],"dips_bw":[{"week":2,"session":1,"day":"push","date":"Apr 21","altIdx":null,"sets":[{"weight":165,"reps":20,"rir":2},{"weight":165,"reps":20,"rir":1},{"weight":165,"reps":15,"rir":0}]},{"week":4,"session":1,"day":"push","date":"May 2","altIdx":null,"sets":[{"weight":165,"reps":20,"rir":2},{"weight":165,"reps":17,"rir":0},{"weight":165,"reps":15,"rir":0}]}],"pullups":[{"week":2,"session":2,"day":"pull","date":"Apr 24","altIdx":null,"sets":[{"weight":25,"reps":10,"rir":1}]},{"week":3,"session":2,"day":"pull","date":"Apr 30","altIdx":null,"sets":[{"weight":25,"reps":10,"rir":2},{"weight":25,"reps":8,"rir":0},{"weight":25,"reps":8,"rir":0}]}],"db_bench":[{"week":3,"session":1,"day":"push","date":"Apr 28","altIdx":0,"sets":[{"weight":65,"reps":12,"rir":2},{"weight":65,"reps":10,"rir":1},{"weight":65,"reps":9,"rir":0}]},{"week":4,"session":3,"day":"push","date":"May 6","altIdx":1,"sets":[{"weight":65,"reps":12,"rir":2},{"weight":65,"reps":12,"rir":null},{"weight":65,"reps":12,"rir":1}]}],"dips":[{"week":3,"session":1,"day":"push","date":"Apr 28","altIdx":null,"sets":[{"weight":35,"reps":8,"rir":1},{"weight":35,"reps":9,"rir":0},{"weight":35,"reps":7,"rir":0}]},{"week":4,"session":3,"day":"push","date":"May 6","altIdx":null,"sets":[{"weight":35,"reps":9,"rir":0},{"weight":35,"reps":10,"rir":0},{"weight":35,"reps":7,"rir":0}]}],"tri_push":[{"week":3,"session":1,"day":"push","date":"Apr 28","altIdx":null,"sets":[{"weight":80,"reps":15,"rir":2},{"weight":80,"reps":12,"rir":0},{"weight":80,"reps":11,"rir":0}]},{"week":4,"session":1,"day":"push","date":"May 2","altIdx":null,"sets":[{"weight":80,"reps":15,"rir":3},{"weight":80,"reps":13,"rir":0},{"weight":80,"reps":13,"rir":0}]},{"week":4,"session":3,"day":"push","date":"May 6","altIdx":null,"sets":[{"weight":80,"reps":15,"rir":2},{"weight":80,"reps":14,"rir":0},{"weight":80,"reps":13,"rir":0}]},{"week":4,"session":5,"day":"push","date":"May 10","altIdx":null,"sets":[{"weight":80,"reps":null,"rir":1},{"weight":80,"reps":15,"rir":0},{"weight":80,"reps":15,"rir":0}]}],"tri_kick":[{"week":3,"session":1,"day":"push","date":"Apr 28","altIdx":null,"sets":[{"weight":20,"reps":10,"rir":0},{"weight":20,"reps":8,"rir":0},{"weight":20,"reps":10,"rir":0}]}],"bar_row":[{"week":3,"session":2,"day":"pull","date":"Apr 30","altIdx":null,"sets":[{"weight":155,"reps":8,"rir":0},{"weight":155,"reps":6,"rir":0},{"weight":145,"reps":8,"rir":0}]}],"cable_curl":[{"week":3,"session":2,"day":"pull","date":"Apr 30","altIdx":null,"sets":[{"weight":50,"reps":15,"rir":2},{"weight":50,"reps":10,"rir":0},{"weight":45,"reps":10,"rir":0}]},{"week":4,"session":2,"day":"pull","date":"May 5","altIdx":null,"sets":[{"weight":45,"reps":8,"rir":0},{"weight":35,"reps":12,"rir":0},{"weight":25,"reps":12,"rir":0}]}],"rdl":[{"week":3,"session":3,"day":"legs","date":"May 1","altIdx":null,"sets":[{"weight":195,"reps":8,"rir":1},{"weight":195,"reps":8,"rir":1},{"weight":195,"reps":8,"rir":0}]},{"week":4,"session":4,"day":"legs","date":"May 7","altIdx":null,"sets":[{"weight":205,"reps":8,"rir":null},{"weight":205,"reps":8,"rir":2},{"weight":205,"reps":8,"rir":0}]}],"sl_press":[{"week":3,"session":3,"day":"legs","date":"May 1","altIdx":null,"sets":[{"weight":110,"reps":10,"rir":1},{"weight":110,"reps":9,"rir":1},{"weight":110,"reps":8,"rir":0}]},{"week":4,"session":4,"day":"legs","date":"May 7","altIdx":null,"sets":[{"weight":110,"reps":10,"rir":1},{"weight":110,"reps":10,"rir":0},{"weight":110,"reps":7,"rir":0}]}],"leg_curl":[{"week":3,"session":3,"day":"legs","date":"May 1","altIdx":null,"sets":[{"weight":95,"reps":14,"rir":0},{"weight":95,"reps":12,"rir":0},{"weight":85,"reps":12,"rir":1}]},{"week":4,"session":2,"day":"legs","date":"May 4","altIdx":null,"sets":[{"weight":50,"reps":12,"rir":3},{"weight":50,"reps":12,"rir":3},{"weight":50,"reps":12,"rir":3}]},{"week":4,"session":4,"day":"legs","date":"May 8","altIdx":null,"sets":[{"weight":95,"reps":12,"rir":null},{"weight":95,"reps":12,"rir":null},{"weight":95,"reps":12,"rir":null}]}],"leg_ext":[{"week":3,"session":3,"day":"legs","date":"May 1","altIdx":null,"sets":[{"weight":105,"reps":15,"rir":2},{"weight":105,"reps":13,"rir":0},{"weight":105,"reps":19,"rir":0}]},{"week":4,"session":2,"day":"legs","date":"May 4","altIdx":null,"sets":[{"weight":65,"reps":15,"rir":3},{"weight":65,"reps":12,"rir":3},{"weight":65,"reps":12,"rir":3}]},{"week":4,"session":4,"day":"legs","date":"May 8","altIdx":null,"sets":[{"weight":105,"reps":12,"rir":null},{"weight":105,"reps":12,"rir":null},{"weight":105,"reps":12,"rir":null}]}],"db_fly":[{"week":4,"session":1,"day":"push","date":"May 2","altIdx":null,"sets":[{"weight":25,"reps":12,"rir":0},{"weight":25,"reps":12,"rir":0},{"weight":25,"reps":12,"rir":2}]}],"hack_sq":[{"week":4,"session":2,"day":"legs","date":"May 4","altIdx":null,"sets":[{"weight":110,"reps":null,"rir":3},{"weight":110,"reps":10,"rir":3},{"weight":110,"reps":10,"rir":2}]},{"week":4,"session":4,"day":"legs","date":"May 7","altIdx":null,"sets":[{"weight":160,"reps":10,"rir":3}]}],"sldl":[{"week":4,"session":2,"day":"legs","date":"May 4","altIdx":null,"sets":[{"weight":25,"reps":10,"rir":2},{"weight":25,"reps":10,"rir":1},{"weight":25,"reps":10,"rir":2}]}],"calves":[{"week":4,"session":2,"day":"legs","date":"May 4","altIdx":null,"sets":[{"weight":165,"reps":20,"rir":3},{"weight":165,"reps":20,"rir":3},{"weight":165,"reps":20,"rir":3}]}],"bb_squat":[{"week":4,"session":4,"day":"legs","date":"May 7","altIdx":null,"sets":[{"weight":175,"reps":5,"rir":1},{"weight":175,"reps":4,"rir":0},{"weight":155,"reps":7,"rir":0}]}],"cable_row":[{"week":4,"session":5,"day":"pull","date":"May 8","altIdx":null,"sets":[{"weight":150,"reps":8,"rir":0},{"weight":135,"reps":11,"rir":0},{"weight":135,"reps":9,"rir":0}]}],"preacher":[{"week":4,"session":5,"day":"pull","date":"May 8","altIdx":null,"sets":[{"weight":30,"reps":8,"rir":0},{"weight":25,"reps":10,"rir":0},{"weight":25,"reps":10,"rir":0}]}]},"settings":{"restSec":90}};
+
+// ══════════════════════════════════════════════════════════════════════
 // STORAGE (preserves existing data)
 // ══════════════════════════════════════════════════════════════════════
+function _applyStoredData(r){
+  S = Object.assign({week:1,session:1,dayIdx:0,active:false,sessionDate:null,lastDayId:null,
+                     setData:{},expandedEx:null,selectedEx:{},
+                     deload:{lastWeek:0,postponeCount:0},deloadActive:false}, r.S || {});
+  DB = r.DB || {};
+  if(!S.selectedEx)  S.selectedEx  = {};
+  if(!S.deload)      S.deload      = {lastWeek:0, postponeCount:0};
+  if(S.deloadActive === undefined) S.deloadActive = false;
+  if(!DB.skipped)    DB.skipped    = [];
+  if(!DB.feedback)   DB.feedback   = {};
+  if(!DB.deloadWeeks) DB.deloadWeeks = [];
+}
 function load(){
   try{
     const r=JSON.parse(localStorage.getItem(KEY));
-    if(r){
-      S=Object.assign(S,r.S||{});
-      DB=r.DB||{};
-      // Migration: ensure new fields exist
-      if(!S.selectedEx) S.selectedEx={};
-      if(!S.deload) S.deload={lastWeek:0, postponeCount:0};
-      if(S.deloadActive===undefined) S.deloadActive=false;
-      if(!DB.skipped) DB.skipped=[];
-      if(!DB.feedback) DB.feedback={};
-      if(!DB.deloadWeeks) DB.deloadWeeks=[];
+    // r is truthy and has meaningful content (at least S or DB with data)
+    if(r && (r.S || (r.DB && Object.keys(r.DB).length > 0))){
+      _applyStoredData(r);
+      return;
     }
   }catch(e){}
+  // No local data — seed from the embedded snapshot so history is
+  // available on first open / new device, without touching future saves.
+  _applyStoredData(SEED_DATA);
+  if(SEED_DATA.settings && typeof SEED_DATA.settings.restSec === 'number'){
+    try{ localStorage.setItem('wt_rest_sec', String(SEED_DATA.settings.restSec)); }catch(e){}
+  }
+  // Persist seeded data immediately so subsequent loads use localStorage.
+  try{ localStorage.setItem(KEY, JSON.stringify({S, DB})); }catch(e){}
 }
 function save(){
   try{localStorage.setItem(KEY,JSON.stringify({S,DB}));}
@@ -1913,23 +1934,6 @@ function blowoutThreshold(ex){
 }
 
 function getSug(ex){
-  // Coach-proposed in-session override wins over the algorithm. The
-  // override is cleared when a new session starts (confirmSession).
-  // Logged sets at the override weight automatically feed into next
-  // session's getSug via the existing weight-drop-recovery case, so
-  // propagation is one-way and natural.
-  const ov = (S && S.sessionOverrides && S.sessionOverrides[ex.id]) || null;
-  if(ov && typeof ov.weight === 'number' && S.active){
-    return {
-      txt:    '🤖 ' + ov.weight + ' ' + ex.unit,
-      go:     false,
-      val:    ov.weight,
-      reason: ov.reason || 'AI override applied this session',
-      micro:  false,
-      isAiOverride: true
-    };
-  }
-
   const h=getNonDeloadSessions(ex.id);
   if(!h.length) return{txt:ex.unit==='BW'?'Bodyweight':`Start: ${ex.sw} ${ex.unit}`,go:false,val:ex.sw,
     reason:`Target: ${ex.rep} reps per set`,micro:false};
@@ -2212,12 +2216,6 @@ function prefillW(exId,setIdx){
   const ex=findEx(exId);
   if(!ex)return 50;
 
-  // Coach-proposed session override (applied via <changes>
-  // set_weight_override). fromIdx records how many sets were already
-  // logged when the override was applied, so the override only affects
-  // sets the user hasn't done yet. ov.weight beats the prevSD carry.
-  const ov = (S && S.sessionOverrides && S.sessionOverrides[exId]) || null;
-
   // Mid-session weight drop: if the previous set in THIS session fell below
   // the bottom of the rep range, the weight is too heavy. Pre-fill 10% less.
   if(setIdx>0){
@@ -2229,20 +2227,12 @@ function prefillW(exId,setIdx){
         const dropped=Math.round(prevSD.weight*0.9/2.5)*2.5;
         return dropped;
       }
-      // Coach override beats prevSD carry, but only for sets the
-      // override was meant to cover.
-      if(ov && setIdx >= (ov.fromIdx||0)) return ov.weight;
       // Otherwise carry the same weight from the previous set
       return prevSD.weight;
     }
     // If previous set has weight but no reps, still carry the weight
-    if(prevSD&&prevSD.weight){
-      if(ov && setIdx >= (ov.fromIdx||0)) return ov.weight;
-      return prevSD.weight;
-    }
+    if(prevSD&&prevSD.weight) return prevSD.weight;
   }
-  // Set 0 (or no prevSD): override beats algorithm
-  if(ov) return ov.weight;
 
   const sv=getSug(ex).val;
   return isCurrentDeload()?deloadWeight(sv):sv;
@@ -2315,15 +2305,6 @@ function openSetPopup(exId,setIdx){
   // Nippard tip in popup
   const sug=getSug(ex);
   let tipHtml='';
-
-  // Priority 0: AI session override active for this exercise
-  const _ov = (S.sessionOverrides && S.sessionOverrides[exId]) || null;
-  if(_ov && setIdx >= (_ov.fromIdx || 0) && !alreadyDone){
-    tipHtml=`<div class="nip-tip" style="margin-bottom:14px;border-color:rgba(232,168,56,.4);background:rgba(232,168,56,.06)">
-      <div class="nip-lbl" style="color:#e8a838">🤖 Coach Override</div>
-      <div class="nip-txt">Use ${_ov.weight} ${ex.unit} for the rest of this session. ${_ov.reason ? esc(_ov.reason) : ''}</div>
-    </div>`;
-  }
 
   // Priority 1: Mid-session weight drop detection
   if(!tipHtml && setIdx>0 && !alreadyDone){
@@ -2552,10 +2533,6 @@ function confirmSession(){
   S.week=SESS.week;S.session=SESS.session;S.dayIdx=SESS.dayIdx;
   S.active=true;S.sessionDate=fullDate();S.lastDayId=DAYS[SESS.dayIdx].id;
   S.setData={};S.expandedEx=null;S.selectedEx={};
-  // Clear any AI-proposed weight overrides — they're session-scoped
-  // by design. Logged sets at last session's override weight have
-  // already informed getSug for this session.
-  S.sessionOverrides={};
   window._currentSong=getRandomSong();
   cancelRestTimer();
   requestWakeLock();
@@ -3792,37 +3769,18 @@ function parseCoachProposal(text){
     }
   }
 
-  // Validate "set_weight_override": session-scoped weight change for
-  // a specific exercise. Used mid-session when the user reports an
-  // unusually hard set and the coach wants to drop weight.
-  const cleanOverrides = {};
-  if(parsed && parsed.set_weight_override && typeof parsed.set_weight_override === 'object'){
-    for(const exId of Object.keys(parsed.set_weight_override)){
-      if(!findEx(exId)) continue; // exercise must exist
-      const o = parsed.set_weight_override[exId];
-      if(!o || typeof o.weight !== 'number') continue;
-      if(!isFinite(o.weight) || o.weight < 0 || o.weight > 1000) continue;
-      cleanOverrides[exId] = {
-        weight: o.weight,
-        reason: typeof o.reason === 'string' ? o.reason.slice(0, 120) : null
-      };
-    }
-  }
-
   const hasCats  = Object.keys(cleanCats).length > 0;
   const hasAdds  = Object.keys(cleanAdds).length > 0;
   const hasSongs = cleanSongs.length > 0;
-  const hasOver  = Object.keys(cleanOverrides).length > 0;
-  if(!hasCats && !hasAdds && !hasSongs && !hasOver) return { visibleText: text.replace(m[0], '').trim(), proposal: null };
+  if(!hasCats && !hasAdds && !hasSongs) return { visibleText: text.replace(m[0], '').trim(), proposal: null };
 
   const visibleText = text.replace(m[0], '').trim();
   const proposal = {
     summary: typeof parsed.summary === 'string' ? parsed.summary.slice(0, 200) : 'AI-proposed changes'
   };
-  if(hasCats)  proposal.categories           = cleanCats;
-  if(hasAdds)  proposal.add_exercises        = cleanAdds;
-  if(hasSongs) proposal.add_songs            = cleanSongs;
-  if(hasOver)  proposal.set_weight_override  = cleanOverrides;
+  if(hasCats)  proposal.categories    = cleanCats;
+  if(hasAdds)  proposal.add_exercises = cleanAdds;
+  if(hasSongs) proposal.add_songs     = cleanSongs;
   return { visibleText, proposal };
 }
 
@@ -3934,15 +3892,6 @@ function _proposalDiffText(proposal){
       lines.push('+ Music: ' + s.n + ' — ' + s.a);
     }
   }
-  if(proposal.set_weight_override){
-    for(const exId of Object.keys(proposal.set_weight_override)){
-      const ex = findEx(exId);
-      const ov = proposal.set_weight_override[exId];
-      const exName = ex ? ex.name : exId;
-      const unit   = ex ? (ex.unit || '') : '';
-      lines.push('⚖ ' + exName + ': use ' + ov.weight + ' ' + unit + ' for the rest of this session');
-    }
-  }
   return lines.join('\n');
 }
 
@@ -3996,24 +3945,6 @@ function applyCoachProposal(historyIdx){
     // Push them into the runtime catalog so the picker shows them now
     applyAddedExercises();
   }
-  // Apply any set_weight_override into the session-scoped store.
-  // Records logged-set count NOW so the override only affects sets
-  // the user hasn't done yet — already-logged sets keep their
-  // original weights.
-  if(msg.proposal.set_weight_override){
-    if(!S.sessionOverrides) S.sessionOverrides = {};
-    for(const exId of Object.keys(msg.proposal.set_weight_override)){
-      const ov = msg.proposal.set_weight_override[exId];
-      const loggedCount = Object.keys(S.setData || {})
-        .filter(k => k.indexOf(exId + '-') === 0).length;
-      S.sessionOverrides[exId] = {
-        weight:  ov.weight,
-        fromIdx: loggedCount,
-        reason:  ov.reason
-      };
-    }
-  }
-
   // Merge any newly-proposed songs into addedSongs
   if(Array.isArray(msg.proposal.add_songs) && msg.proposal.add_songs.length){
     const existingKeys = new Set(S.aiPrefs.addedSongs.map(s => ((s.n||'') + '|' + (s.a||'')).toLowerCase()));
@@ -4064,8 +3995,6 @@ function revertCoachPrefs(){
   }
   delete S.aiPrefs;
   S.aiUndoStack = [];
-  // Session weight overrides are AI-proposed too — clear them on Revert.
-  S.sessionOverrides = {};
   if(S.selectedEx) S.selectedEx = {};
   save();
   renderCoachPrefsBanner();
@@ -4271,16 +4200,12 @@ async function askCoach(question){
       '  },\n' +
       '  "add_songs": [\n' +
       '    { "name": "<track title>", "artist": "<artist>" }\n' +
-      '  ],\n' +
-      '  "set_weight_override": {\n' +
-      '    "<exercise_id>": { "weight": <number>, "reason": "<short why>" }\n' +
-      '  }\n' +
+      '  ]\n' +
       '}\n' +
       '</changes>\n' +
       'Use category IDs and exercise IDs EXACTLY as they appear in PROGRAM. ' +
-      'Only include fields you want to change. All four top-level keys ' +
-      '(categories, add_exercises, add_songs, set_weight_override) are ' +
-      'optional — include only what you need. ' +
+      'Only include fields you want to change. All three top-level keys ' +
+      '(categories, add_exercises, add_songs) are optional — include only what you need. ' +
       'Boost = exercises to highlight and prefer in selection. ' +
       'add_exercises = NEW exercises to add to the catalog (use this for ' +
       'requests like "add quad-specific exercises" — propose real, safe, ' +
@@ -4290,14 +4215,6 @@ async function askCoach(question){
       'hype", "extend the playlist"). Pick mainstream tracks Deezer indexes ' +
       '(electronic / house / EDM / hip-hop). Limit 8 per proposal. Avoid ' +
       'tracks already in MUSIC CATALOG below. ' +
-      'set_weight_override = a session-scoped weight change applied to the ' +
-      'remaining sets of an exercise the user has STARTED but not finished. ' +
-      'Use this when the user asks "should I drop weight" mid-session, when ' +
-      'their first set indicates the prescribed weight is too heavy (e.g. ' +
-      'barely hit bottom of rep range with RIR 0), or when they fatigue ' +
-      'unexpectedly. The override clears at the start of the next session. ' +
-      'Already-logged sets keep their weights; only future sets in this ' +
-      'session see the new weight. ' +
       'Change at most 3 categories per proposal. For pure questions (no plan ' +
       'change requested), respond normally with no <changes> block.\n\n' +
       'CURRENT TRAINING DATA:\n' + buildCoachContext();
@@ -4409,6 +4326,129 @@ function coachInputKey(e){
 }
 
 // ══════════════════════════════════════════════════════════════════════
+// DAILY COACH BRIEF
+// Fires once per weekday morning (Mon–Fri) after 8 AM. Clears the
+// previous chat, then sends a Groq call about the NEXT workout using
+// logged history + Jeff Nippard hypertrophy principles.
+// ══════════════════════════════════════════════════════════════════════
+const DAILY_BRIEF_LS = 'wt_daily_brief_date';
+
+function _buildDailyBriefContext(){
+  // Determine next workout day
+  const nextDayIdx = getRecDayIdx();
+  const nextDay = DAYS[nextDayIdx];
+  if(!nextDay || nextDay.isRest) return null;
+
+  const lines = [];
+  const nextWk = getSugNext();
+  lines.push('NEXT SESSION: ' + (nextDay.label || nextDay.id) + ' — Week ' + nextWk.week + ', Session ' + nextWk.session);
+
+  // Per-exercise suggestion + recent history
+  const exercises = getActiveExercises(nextDay);
+  for(const ex of exercises){
+    const sug = getSug(ex);
+    const hist = getNonDeloadSessions(ex.id);
+    const last = hist.length ? hist[hist.length - 1] : null;
+    let line = ex.name + ' (' + ex.rep + ' reps): suggest ' + sug.val + ' ' + ex.unit;
+    if(sug.go) line += ' 📈 increase';
+    if(sug.micro) line += ' — micro-progress targets: ' + (sug.targetReps || []).join('/');
+    if(last && last.sets){
+      const setStr = last.sets.filter(Boolean).map(s => s.weight + '×' + (s.reps||'?')).join(', ');
+      line += ' | last: ' + setStr;
+    }
+    lines.push('  ' + line);
+  }
+
+  // Deload status
+  if(S.deloadActive) lines.push('NOTE: Deload week active — weights at ~60%.');
+  const allHist = exercises.flatMap(ex => getNonDeloadSessions(ex.id));
+  if(allHist.length >= 12 && !S.deloadActive) lines.push('NOTE: ~' + allHist.length + ' sessions logged. Consider whether a deload is approaching.');
+
+  return lines.join('\n');
+}
+
+async function fireDailyBrief(){
+  const key = getCoachKey();
+  if(!key) return; // no key — skip silently
+
+  const ctx = _buildDailyBriefContext();
+  if(!ctx) return; // rest day — skip
+
+  // Clear old history and start fresh
+  _coachHistory = [];
+  saveCoachHistory();
+  renderCoachThread('Coach is preparing your morning brief…');
+  // Make the coach panel visible if the sheet is open
+  const wrap = document.getElementById('coach-thread-wrap');
+  if(wrap) wrap.style.display = 'block';
+
+  const systemContent =
+    'You are a hypertrophy-focused strength coach. Every weekday morning you ' +
+    'send the user a concise, data-driven briefing about their upcoming workout. ' +
+    'Base your advice strictly on Jeff Nippard\'s evidence-based hypertrophy principles: ' +
+    'double progression (add reps within range, then bump weight), RIR-based autoregulation, ' +
+    'compound-first exercise order, adequate volume per muscle group, and planned deload weeks ' +
+    'every 8-12 sessions. Be direct and specific — reference actual weights and rep targets ' +
+    'from the data below. Keep the brief under 200 words. Format: ' +
+    '1) A one-line greeting naming the day type. ' +
+    '2) 2-3 bullet highlights: what to push, what to be cautious about, any progression milestone. ' +
+    '3) One concise Nippard principle reminder relevant to this session. ' +
+    'No fluff, no disclaimers. Do NOT propose <changes> blocks — this is a read-only morning brief.\n\n' +
+    'TRAINING DATA:\n' + buildCoachContext() + '\n\n' + ctx;
+
+  try {
+    const resp = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + key },
+      body: JSON.stringify({
+        model: COACH_MODEL,
+        messages: [{ role: 'system', content: systemContent },
+                   { role: 'user', content: 'Good morning. Give me my daily training brief.' }],
+        temperature: 0.55,
+        max_tokens: 320
+      })
+    });
+
+    if(!resp.ok){
+      renderCoachThread();
+      return;
+    }
+    const data = await resp.json();
+    const text = (((data || {}).choices || [])[0] || {}).message
+                  ? (data.choices[0].message.content || '').trim() : '';
+    if(!text){ renderCoachThread(); return; }
+
+    // Store as assistant message (no proposal — briefs are read-only)
+    _coachHistory.push({ role: 'assistant', content: text, t: Date.now(), isDailyBrief: true });
+    saveCoachHistory();
+    // Mark today as briefed so we don't fire again
+    try { localStorage.setItem(DAILY_BRIEF_LS, new Date().toDateString()); } catch(e){}
+    renderCoachThread();
+  } catch(e){
+    renderCoachThread();
+  }
+}
+
+function checkDailyBrief(){
+  // Only fire on weekdays (Mon=1 … Fri=5)
+  const now = new Date();
+  const day = now.getDay(); // 0=Sun, 6=Sat
+  if(day === 0 || day === 6) return;
+
+  // Only after 8:00 AM
+  if(now.getHours() < 8) return;
+
+  // Only once per calendar day
+  try {
+    const last = localStorage.getItem(DAILY_BRIEF_LS);
+    if(last === now.toDateString()) return;
+  } catch(e){}
+
+  // Fire asynchronously so it doesn't block the initial render
+  setTimeout(fireDailyBrief, 1200);
+}
+
+// ══════════════════════════════════════════════════════════════════════
 // INIT
 // ══════════════════════════════════════════════════════════════════════
 load();
@@ -4424,6 +4464,8 @@ render();
 // will catch it on the next foreground transition, and confirmSession
 // will catch it on the next session start — either way we converge.
 if(S.active) requestWakeLock();
+// Daily morning brief — fires once per weekday after 8 AM.
+checkDailyBrief();
 </script>
 </body>
 </html>
