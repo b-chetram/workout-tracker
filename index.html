@@ -339,6 +339,10 @@ input[type=number]::-webkit-inner-spin-button{-webkit-appearance:none}
       <div class="day-picker" id="sess-day-picker"></div>
     </div>
     <button class="sheet-confirm" id="sess-confirm-btn" onclick="confirmSession()">Start Session →</button>
+    <button id="sess-coach-btn" onclick="openPreSessionCoach()"
+      style="width:100%;border-radius:14px;padding:13px;font-size:15px;font-weight:700;margin-top:8px;background:#1a1a1a;color:#e8a838;border:1.5px solid #2a2a2a">
+      💬 Chat with Coach First
+    </button>
     <button class="sheet-cancel" onclick="closeSessSheet()">Cancel</button>
   </div>
 </div>
@@ -789,6 +793,75 @@ const SONGS=[
 ];
 
 function getRandomSong(){return SONGS[Math.floor(Math.random()*SONGS.length)];}
+
+// ══════════════════════════════════════════════════════════════════════
+// MUSCLE GROUP METADATA — used by the AI coach for injury awareness,
+// session-level adjustments, and smart exercise substitutions.
+// mechanics tags: vertical_push, horizontal_push, fly, isolation,
+//   vertical_pull, horizontal_pull, hip_dominant, knee_dominant,
+//   knee_flexion, knee_extension, calf_isolation, lateral_raise,
+//   elbow_flexion, elbow_extension, compound, unilateral, bilateral,
+//   spinal_loading, overhead, bodyweight
+// ══════════════════════════════════════════════════════════════════════
+const MUSCLE_META = {
+  // ── PUSH ──────────────────────────────────────────────────────────
+  ohp:        {primary:['shoulders','triceps'],    secondary:['upper_chest','core'],       mechanics:['vertical_push','compound','bilateral','overhead']},
+  db_bench:   {primary:['chest','triceps'],         secondary:['shoulders'],                mechanics:['horizontal_push','compound','bilateral']},
+  dips:       {primary:['chest','triceps'],         secondary:['shoulders'],                mechanics:['horizontal_push','compound','bilateral','bodyweight']},
+  dips_bw:    {primary:['chest','triceps'],         secondary:['shoulders'],                mechanics:['horizontal_push','compound','bilateral','bodyweight']},
+  cable_fly:  {primary:['chest'],                   secondary:['shoulders'],                mechanics:['horizontal_push','fly','isolation']},
+  db_fly:     {primary:['chest'],                   secondary:['shoulders'],                mechanics:['horizontal_push','fly','isolation']},
+  pushup_w:   {primary:['chest','triceps'],         secondary:['shoulders'],                mechanics:['horizontal_push','compound','bilateral','bodyweight']},
+  laterals:   {primary:['side_delts'],              secondary:[],                           mechanics:['lateral_raise','isolation']},
+  lat_cable:  {primary:['side_delts'],              secondary:[],                           mechanics:['lateral_raise','isolation']},
+  arnold:     {primary:['shoulders'],               secondary:['triceps'],                  mechanics:['vertical_push','compound','bilateral','overhead']},
+  front_raise:{primary:['front_delts'],             secondary:[],                           mechanics:['isolation','vertical_push','overhead']},
+  tri_push:   {primary:['triceps'],                 secondary:[],                           mechanics:['elbow_extension','isolation']},
+  tri_oh:     {primary:['triceps'],                 secondary:[],                           mechanics:['elbow_extension','isolation','overhead']},
+  skull:      {primary:['triceps'],                 secondary:[],                           mechanics:['elbow_extension','isolation']},
+  cgbp:       {primary:['triceps','chest'],          secondary:['shoulders'],                mechanics:['horizontal_push','compound','bilateral']},
+  tri_kick:   {primary:['triceps'],                 secondary:[],                           mechanics:['elbow_extension','isolation']},
+  tri_dip:    {primary:['triceps','chest'],          secondary:[],                           mechanics:['horizontal_push','compound','bilateral','bodyweight']},
+  // ── PULL ──────────────────────────────────────────────────────────
+  lat_pull:   {primary:['lats','biceps'],            secondary:['rear_delts'],               mechanics:['vertical_pull','compound','bilateral']},
+  pullups:    {primary:['lats','biceps'],            secondary:['rear_delts'],               mechanics:['vertical_pull','compound','bilateral','bodyweight']},
+  pullups_bw: {primary:['lats','biceps'],            secondary:['rear_delts'],               mechanics:['vertical_pull','compound','bilateral','bodyweight']},
+  sa_pull:    {primary:['lats','biceps'],            secondary:['rear_delts'],               mechanics:['vertical_pull','compound','unilateral']},
+  bar_row:    {primary:['lats','traps','rhomboids'], secondary:['biceps'],                   mechanics:['horizontal_pull','compound','bilateral','spinal_loading']},
+  pendlay:    {primary:['lats','traps'],             secondary:['biceps'],                   mechanics:['horizontal_pull','compound','bilateral','spinal_loading']},
+  cable_row:  {primary:['lats','traps'],             secondary:['biceps'],                   mechanics:['horizontal_pull','compound','bilateral']},
+  db_row:     {primary:['lats','traps'],             secondary:['biceps'],                   mechanics:['horizontal_pull','compound','unilateral']},
+  face_pull:  {primary:['rear_delts','traps'],       secondary:[],                           mechanics:['horizontal_pull','isolation']},
+  rev_fly:    {primary:['rear_delts'],               secondary:['traps'],                    mechanics:['fly','isolation']},
+  band_pull:  {primary:['rear_delts','traps'],       secondary:[],                           mechanics:['horizontal_pull','isolation']},
+  bar_curl:   {primary:['biceps'],                   secondary:['brachialis'],               mechanics:['elbow_flexion','isolation','bilateral']},
+  ham_curl:   {primary:['biceps','brachialis'],      secondary:[],                           mechanics:['elbow_flexion','isolation','bilateral']},
+  inc_curl:   {primary:['biceps'],                   secondary:[],                           mechanics:['elbow_flexion','isolation','bilateral']},
+  preacher:   {primary:['biceps'],                   secondary:[],                           mechanics:['elbow_flexion','isolation','bilateral']},
+  cable_curl: {primary:['biceps'],                   secondary:[],                           mechanics:['elbow_flexion','isolation','bilateral']},
+  spider_curl:{primary:['biceps'],                   secondary:[],                           mechanics:['elbow_flexion','isolation','bilateral']},
+  // ── LEGS ──────────────────────────────────────────────────────────
+  hack_sq:    {primary:['quads','glutes'],            secondary:['hamstrings'],               mechanics:['knee_dominant','compound','bilateral']},
+  bb_squat:   {primary:['quads','glutes'],            secondary:['hamstrings','core'],        mechanics:['knee_dominant','compound','bilateral','spinal_loading']},
+  goblet_sq:  {primary:['quads','glutes'],            secondary:['hamstrings'],               mechanics:['knee_dominant','compound','bilateral']},
+  leg_press:  {primary:['quads','glutes'],            secondary:['hamstrings'],               mechanics:['knee_dominant','compound','bilateral']},
+  rdl:        {primary:['hamstrings','glutes'],       secondary:['lower_back'],               mechanics:['hip_dominant','compound','bilateral','spinal_loading']},
+  sldl:       {primary:['hamstrings','glutes'],       secondary:['lower_back'],               mechanics:['hip_dominant','compound','bilateral','spinal_loading']},
+  sl_press:   {primary:['quads','glutes'],            secondary:['hamstrings'],               mechanics:['knee_dominant','compound','unilateral']},
+  bss:        {primary:['quads','glutes'],            secondary:['hamstrings','calves'],      mechanics:['knee_dominant','compound','unilateral']},
+  lunges:     {primary:['quads','glutes'],            secondary:['hamstrings','calves'],      mechanics:['knee_dominant','compound','unilateral']},
+  step_ups:   {primary:['quads','glutes'],            secondary:['hamstrings'],               mechanics:['knee_dominant','compound','unilateral']},
+  leg_curl:   {primary:['hamstrings'],               secondary:['calves'],                   mechanics:['knee_flexion','isolation','bilateral']},
+  nordic:     {primary:['hamstrings'],               secondary:[],                           mechanics:['knee_flexion','isolation','bilateral']},
+  db_leg_curl:{primary:['hamstrings'],               secondary:[],                           mechanics:['knee_flexion','isolation','bilateral']},
+  leg_ext:    {primary:['quads'],                    secondary:[],                           mechanics:['knee_extension','isolation','bilateral']},
+  calves:     {primary:['calves'],                   secondary:[],                           mechanics:['calf_isolation','bilateral']},
+  calves_seat:{primary:['calves','soleus'],           secondary:[],                           mechanics:['calf_isolation','bilateral']},
+  calves_db:  {primary:['calves'],                   secondary:[],                           mechanics:['calf_isolation','unilateral']},
+};
+
+// Helper: get muscle meta for an exercise (returns null if not found)
+function getMeta(exId){ return MUSCLE_META[exId] || null; }
 
 // ══════════════════════════════════════════════════════════════════════
 // ENHANCEMENTS: haptics, audio cue, rest timer, sparklines,
@@ -1522,6 +1595,7 @@ let S={week:1,session:1,dayIdx:0,active:false,sessionDate:null,lastDayId:null,
        selectedEx:{},
        deload:{lastWeek:0, postponeCount:0},
        deloadActive:false,
+       sessionAdjustments:{skipToday:[],selectToday:{}},
 };
 let DB={};
 let PU={exId:null,setIdx:null,editing:false,rir:null};
@@ -1540,11 +1614,13 @@ const SEED_DATA = {"S":{"week":4,"session":6,"dayIdx":0,"active":true,"sessionDa
 function _applyStoredData(r){
   S = Object.assign({week:1,session:1,dayIdx:0,active:false,sessionDate:null,lastDayId:null,
                      setData:{},expandedEx:null,selectedEx:{},
-                     deload:{lastWeek:0,postponeCount:0},deloadActive:false}, r.S || {});
+                     deload:{lastWeek:0,postponeCount:0},deloadActive:false,
+                     sessionAdjustments:{skipToday:[],selectToday:{}}}, r.S || {});
   DB = r.DB || {};
   if(!S.selectedEx)  S.selectedEx  = {};
   if(!S.deload)      S.deload      = {lastWeek:0, postponeCount:0};
   if(S.deloadActive === undefined) S.deloadActive = false;
+  if(!S.sessionAdjustments) S.sessionAdjustments = {skipToday:[],selectToday:{}};
   if(!DB.skipped)    DB.skipped    = [];
   if(!DB.feedback)   DB.feedback   = {};
   if(!DB.deloadWeeks) DB.deloadWeeks = [];
@@ -1916,8 +1992,29 @@ function getMainRotation(cat){
 }
 
 function getSelectedForCat(catId, day){
-  // If user explicitly chose for this session, use that
-  if(S.selectedEx[catId] && S.selectedEx[catId].length) return S.selectedEx[catId];
+  // Gather session-level adjustments: skip_today hides exercises entirely,
+  // select_today forces a specific set of exercises for this session only.
+  const adj = S.sessionAdjustments || {};
+  const skipSet = new Set(Array.isArray(adj.skipToday) ? adj.skipToday : []);
+  const forceIds = (adj.selectToday && adj.selectToday[catId]) ? adj.selectToday[catId] : null;
+
+  // Helper: strip skipped exercises from any candidate list
+  const applySkip = ids => ids.filter(id => !skipSet.has(id));
+
+  // Coach-forced selection (select_today) — validate against catalog first
+  if(forceIds && forceIds.length){
+    const cat = day.categories.find(c=>c.id===catId);
+    const validIds = cat ? new Set((cat.exercises||[]).map(e=>e.id)) : new Set();
+    const valid = applySkip(forceIds.filter(id => validIds.has(id)));
+    if(valid.length) return valid;
+  }
+
+  // If user explicitly chose for this session, use that (still skip-filtered)
+  if(S.selectedEx[catId] && S.selectedEx[catId].length){
+    const filtered = applySkip(S.selectedEx[catId]);
+    if(filtered.length) return filtered;
+  }
+
   const cat = day.categories.find(c=>c.id===catId);
   if(!cat) return [];
 
@@ -1925,27 +2022,26 @@ function getSelectedForCat(catId, day){
   // an exercise in this category, keep that exercise selected. Without
   // this, auto-rotation flips to the next main lift the moment set 1 is
   // logged (because now "most recent history" = the exercise we just
-  // logged), and the user's set 2 bubble disappears under them. The bug
-  // that caused main-movement sets to appear not to register.
+  // logged), and the user's set 2 bubble disappears under them.
   const withCurrentData = cat.exercises
     .filter(ex => Object.keys(S.setData).some(k => k.startsWith(ex.id+'-')))
     .map(ex => ex.id);
   if(withCurrentData.length){
-    // For multi-exercise cats, union with the normal selection so the
-    // user doesn't lose their other picks. For main cats (typically 1
-    // exercise selected), this is the one we locked onto.
-    if(cat.isMain) return withCurrentData.slice(0, getCatLimits(cat).max);
-    // Non-main: keep the locked ones plus fill to min/max with defaults
+    if(cat.isMain) return applySkip(withCurrentData.slice(0, getCatLimits(cat).max));
     const defaults = cat.exercises
       .filter(ex => getHist(ex.id).length>0 && !withCurrentData.includes(ex.id))
       .map(e=>e.id);
-    return [...withCurrentData, ...defaults].slice(0, getCatLimits(cat).max);
+    return applySkip([...withCurrentData, ...defaults].slice(0, getCatLimits(cat).max));
   }
 
   // For main categories: auto-rotate to a different exercise each session
   if(cat.isMain){
     const rotation = getMainRotation(cat);
-    return [rotation.recommended];
+    const rotId = applySkip([rotation.recommended]);
+    // If the recommended is skipped, fall back to the next non-skipped exercise
+    if(rotId.length) return rotId;
+    const fallback = applySkip(cat.exercises.map(e=>e.id));
+    return fallback.slice(0, 1);
   }
 
   // For non-main: prefer exercises the user has history with, but
@@ -1955,13 +2051,13 @@ function getSelectedForCat(catId, day){
   const sortByBoost = arr => arr.slice().sort((a, b) => {
     const ai = isExBoosted(cat.id, a.id) ? 1 : 0;
     const bi = isExBoosted(cat.id, b.id) ? 1 : 0;
-    return bi - ai; // boosted first
+    return bi - ai;
   });
-  const withHistory = sortByBoost(cat.exercises.filter(ex=>getHist(ex.id).length>0));
+  const withHistory = sortByBoost(cat.exercises.filter(ex=>getHist(ex.id).length>0 && !skipSet.has(ex.id)));
   if(withHistory.length >= lim.min){
     return withHistory.slice(0, lim.max).map(e=>e.id);
   }
-  return sortByBoost(cat.exercises).slice(0, lim.min).map(e=>e.id);
+  return sortByBoost(cat.exercises.filter(ex=>!skipSet.has(ex.id))).slice(0, lim.min).map(e=>e.id);
 }
 
 function isExSelected(exId, day){
@@ -2643,6 +2739,7 @@ function confirmSession(){
   S.week=SESS.week;S.session=SESS.session;S.dayIdx=SESS.dayIdx;
   S.active=true;S.sessionDate=fullDate();S.lastDayId=DAYS[SESS.dayIdx].id;
   S.setData={};S.expandedEx=null;S.selectedEx={};
+  S.sessionAdjustments={skipToday:[],selectToday:{}};
   window._currentSong=getRandomSong();
   cancelRestTimer();
   requestWakeLock();
@@ -3445,11 +3542,13 @@ function handleImportFileChosen(event){
       // Replace state. Preserve the load()-style defensive defaults.
       S = Object.assign({week:1,session:1,dayIdx:0,active:false,sessionDate:null,lastDayId:null,
                          setData:{},expandedEx:null,selectedEx:{},
-                         deload:{lastWeek:0,postponeCount:0},deloadActive:false}, parsed.S);
+                         deload:{lastWeek:0,postponeCount:0},deloadActive:false,
+                         sessionAdjustments:{skipToday:[],selectToday:{}}}, parsed.S);
       DB = parsed.DB || {};
       if(!S.selectedEx) S.selectedEx = {};
       if(!S.deload) S.deload = {lastWeek:0, postponeCount:0};
       if(S.deloadActive === undefined) S.deloadActive = false;
+      if(!S.sessionAdjustments) S.sessionAdjustments = {skipToday:[],selectToday:{}};
       if(!DB.skipped) DB.skipped = [];
       if(!DB.feedback) DB.feedback = {};
       if(!DB.deloadWeeks) DB.deloadWeeks = [];
@@ -3585,8 +3684,43 @@ function openCoachSheet(){
     renderCoachThread();
   }
 }
+// When user taps "Chat with Coach First" in the session sheet, we
+// close the session sheet, open the coach with a contextual pre-fill,
+// and flag that we should re-open the session sheet on coach close.
+let _preSessionMode = false;
+
+function openPreSessionCoach(){
+  const day = DAYS[SESS.dayIdx];
+  const dayLabel = day ? day.label : 'workout';
+  const dayMuscles = day && day.sub ? day.sub : '';
+  // Snapshot the user's current session sheet selections so they're
+  // preserved when the coach sheet closes and the sess sheet re-opens.
+  _preSessionSess = {week:SESS.week, session:SESS.session, dayIdx:SESS.dayIdx};
+  _preSessionMode = true;
+  closeSessSheet();
+  openCoachSheet();
+  // Pre-fill with a contextual prompt so the athlete can just edit and send
+  const input = document.getElementById('coach-input');
+  if(input && !input.value.trim()){
+    input.value = `About to start ${dayLabel} day (${dayMuscles}). Any adjustments I should make today?`;
+    input.focus();
+  }
+}
+let _preSessionSess = null;
+
 function closeCoachSheet(){
   document.getElementById('coach-overlay').classList.add('hidden');
+  if(_preSessionMode){
+    _preSessionMode = false;
+    // Re-open the session sheet, restoring the user's prior selections
+    if(_preSessionSess){
+      SESS = {week:_preSessionSess.week, session:_preSessionSess.session, dayIdx:_preSessionSess.dayIdx};
+      _preSessionSess = null;
+    }
+    document.getElementById('sess-warn').style.display = S.active ? 'block' : 'none';
+    syncSessSheet();
+    document.getElementById('sess-overlay').classList.remove('hidden');
+  }
 }
 function saveCoachKey(){
   const v = document.getElementById('coach-key-input').value.trim();
@@ -3720,6 +3854,28 @@ function buildCoachContext(){
     }
   }
 
+  // 3b. SESSION ADJUSTMENTS (ephemeral — cleared each new session) ----
+  const sa = S && S.sessionAdjustments;
+  const hasSkip = sa && Array.isArray(sa.skipToday) && sa.skipToday.length;
+  const hasSel  = sa && sa.selectToday && Object.keys(sa.selectToday).length;
+  if(hasSkip || hasSel){
+    lines.push('\n=== ACTIVE SESSION ADJUSTMENTS (ephemeral — this session only) ===');
+    if(hasSkip){
+      const names = sa.skipToday.map(id => { const ex=findEx(id); return ex?ex.name:id; });
+      lines.push('Skipping today: ' + names.join(', '));
+    }
+    if(hasSel){
+      for(const catId of Object.keys(sa.selectToday)){
+        const cat = _findCatById(catId);
+        const names = sa.selectToday[catId].map(id => {
+          const ex = cat ? (cat.exercises||[]).find(e=>e.id===id) : null;
+          return ex ? ex.name : id;
+        });
+        lines.push('Forced selection: ' + (cat?cat.name:catId) + ' → ' + names.join(', '));
+      }
+    }
+  }
+
   // 4. HISTORY + PROGRESSION ANALYSIS --------------------------------
   const SYSTEM_KEYS = { skipped:1, feedback:1, deloadWeeks:1, notes:1 };
   const exIds = Object.keys(DB || {}).filter(k => !SYSTEM_KEYS[k] && Array.isArray(DB[k]));
@@ -3794,7 +3950,9 @@ function buildCoachContext(){
 
       const sug = ex ? getSug(ex) : null;
       const sugStr = sug ? ' | alg.suggests: ' + sug.val + (unit?' '+unit:'') + (sug.go?' 📈':'') + (sug.micro?' (micro)':'') : '';
-      lines.push('- ' + exName + (unit?' ('+unit+')':'') + (top?(' '+bot+'-'+top+' rep range'):'') + status + sugStr);
+      const meta = getMeta(exId);
+      const metaStr = meta ? ' [muscles:' + meta.primary.join('+') + ' | ' + meta.mechanics.join(',') + ']' : '';
+      lines.push('- ' + exName + (unit?' ('+unit+')':'') + (top?(' '+bot+'-'+top+' rep range'):'') + metaStr + status + sugStr);
       lines.push('  ' + histStr);
       logged++;
     }
@@ -3957,21 +4115,54 @@ function parseCoachProposal(text){
     }
   }
 
-  const hasCats    = Object.keys(cleanCats).length > 0;
-  const hasAdds    = Object.keys(cleanAdds).length > 0;
-  const hasSongs   = cleanSongs.length > 0;
-  const hasRemove  = cleanRemove.length > 0;
-  if(!hasCats && !hasAdds && !hasSongs && !hasRemove)
+  // Validate "skip_today": hide specific exercises from THIS session only.
+  // Ephemeral — cleared when the next session is confirmed. Only accepts
+  // IDs that exist in the full catalog (findEx checks all days).
+  const cleanSkipToday = [];
+  if(parsed && Array.isArray(parsed.skip_today)){
+    const seen = new Set();
+    for(const id of parsed.skip_today.slice(0, 20)){
+      if(typeof id !== 'string' || seen.has(id)) continue;
+      if(!findEx(id)) continue;
+      seen.add(id);
+      cleanSkipToday.push(id);
+    }
+  }
+
+  // Validate "select_today": force-select specific exercises for THIS session
+  // only. Format: { "<cat_id>": ["<ex_id>", ...] }. Ephemeral like skip_today.
+  const cleanSelectToday = {};
+  if(parsed && parsed.select_today && typeof parsed.select_today === 'object'){
+    for(const catId of Object.keys(parsed.select_today)){
+      const cat = _findCatById(catId);
+      if(!cat) continue;
+      const arr = parsed.select_today[catId];
+      if(!Array.isArray(arr)) continue;
+      const validIds = new Set((cat.exercises || []).map(e => e.id));
+      const valid = arr.filter(id => typeof id === 'string' && validIds.has(id)).slice(0, cat.exercises.length);
+      if(valid.length) cleanSelectToday[catId] = valid;
+    }
+  }
+
+  const hasCats        = Object.keys(cleanCats).length > 0;
+  const hasAdds        = Object.keys(cleanAdds).length > 0;
+  const hasSongs       = cleanSongs.length > 0;
+  const hasRemove      = cleanRemove.length > 0;
+  const hasSkipToday   = cleanSkipToday.length > 0;
+  const hasSelectToday = Object.keys(cleanSelectToday).length > 0;
+  if(!hasCats && !hasAdds && !hasSongs && !hasRemove && !hasSkipToday && !hasSelectToday)
     return { visibleText: text.replace(m[0], '').trim(), proposal: null };
 
   const visibleText = text.replace(m[0], '').trim();
   const proposal = {
     summary: typeof parsed.summary === 'string' ? parsed.summary.slice(0, 200) : 'AI-proposed changes'
   };
-  if(hasCats)    proposal.categories       = cleanCats;
-  if(hasAdds)    proposal.add_exercises    = cleanAdds;
-  if(hasSongs)   proposal.add_songs        = cleanSongs;
-  if(hasRemove)  proposal.remove_exercises = cleanRemove;
+  if(hasCats)          proposal.categories       = cleanCats;
+  if(hasAdds)          proposal.add_exercises    = cleanAdds;
+  if(hasSongs)         proposal.add_songs        = cleanSongs;
+  if(hasRemove)        proposal.remove_exercises = cleanRemove;
+  if(hasSkipToday)     proposal.skip_today       = cleanSkipToday;
+  if(hasSelectToday)   proposal.select_today     = cleanSelectToday;
   return { visibleText, proposal };
 }
 
@@ -4089,6 +4280,21 @@ function _proposalDiffText(proposal){
       lines.push('✕ Remove: ' + (ex ? ex.name : id));
     }
   }
+  if(Array.isArray(proposal.skip_today) && proposal.skip_today.length){
+    const names = proposal.skip_today.map(id => { const ex=findEx(id); return ex?ex.name:id; });
+    lines.push('⏭ Skip today only: ' + names.join(', ') + ' (auto-restores next session)');
+  }
+  if(proposal.select_today && Object.keys(proposal.select_today).length){
+    for(const catId of Object.keys(proposal.select_today)){
+      const cat = _findCatById(catId);
+      const catName = cat ? cat.name : catId;
+      const names = proposal.select_today[catId].map(id => {
+        const ex = cat ? (cat.exercises||[]).find(e=>e.id===id) : null;
+        return ex ? ex.name : id;
+      });
+      lines.push('📌 Select today only: ' + catName + ' → ' + names.join(', ') + ' (auto-restores next session)');
+    }
+  }
   return lines.join('\n');
 }
 
@@ -4196,6 +4402,38 @@ function applyCoachProposal(historyIdx){
       for(const catId of touched) delete S.selectedEx[catId];
     }
   }
+  // Session-level adjustments: ephemeral, stored in S.sessionAdjustments,
+  // cleared automatically when the next session is confirmed.
+  if(Array.isArray(msg.proposal.skip_today) && msg.proposal.skip_today.length){
+    if(!S.sessionAdjustments) S.sessionAdjustments = {skipToday:[],selectToday:{}};
+    const existingSkip = new Set(S.sessionAdjustments.skipToday || []);
+    for(const id of msg.proposal.skip_today){
+      if(!existingSkip.has(id)){
+        S.sessionAdjustments.skipToday.push(id);
+        existingSkip.add(id);
+      }
+    }
+    // Clear any explicit selections for exercises being skipped so the
+    // picker doesn't keep showing them as chosen.
+    if(S.selectedEx){
+      for(const catId of Object.keys(S.selectedEx)){
+        if(Array.isArray(S.selectedEx[catId])){
+          S.selectedEx[catId] = S.selectedEx[catId].filter(id => !existingSkip.has(id));
+        }
+      }
+    }
+  }
+  if(msg.proposal.select_today && Object.keys(msg.proposal.select_today).length){
+    if(!S.sessionAdjustments) S.sessionAdjustments = {skipToday:[],selectToday:{}};
+    if(!S.sessionAdjustments.selectToday) S.sessionAdjustments.selectToday = {};
+    for(const catId of Object.keys(msg.proposal.select_today)){
+      S.sessionAdjustments.selectToday[catId] = msg.proposal.select_today[catId];
+      // Clear any explicit user pick for this category so the forced
+      // selection takes precedence.
+      if(S.selectedEx) delete S.selectedEx[catId];
+    }
+  }
+
   msg.proposalApplied = true;
   saveCoachHistory();
   save();
@@ -4276,22 +4514,69 @@ function undoLastCoachApply(){
 function renderCoachPrefsBanner(){
   const banner = document.getElementById('coach-prefs-banner');
   if(!banner) return;
-  if(!hasAiPrefs()){
+
+  // Check for both permanent AI prefs AND ephemeral session adjustments
+  const sa = S && S.sessionAdjustments;
+  const hasSkip = sa && Array.isArray(sa.skipToday) && sa.skipToday.length;
+  const hasSel  = sa && sa.selectToday && Object.keys(sa.selectToday).length;
+  const hasSessionAdj = hasSkip || hasSel;
+
+  if(!hasAiPrefs() && !hasSessionAdj){
     banner.style.display = 'none';
     banner.innerHTML = '';
     return;
   }
-  const summary = (S.aiPrefs && S.aiPrefs.summary) || 'AI changes active';
+
   banner.style.display = 'block';
   banner.className = 'coach-prefs-active';
-  const stack = (S && Array.isArray(S.aiUndoStack)) ? S.aiUndoStack : [];
-  const undoBtn = stack.length > 0
-    ? '<button class="coach-prefs-revert" onclick="undoLastCoachApply()" title="Restore the previous AI prefs state">Undo</button>'
-    : '';
-  banner.innerHTML =
-    '<div class="summary">🤖 ' + _esc(summary) + '</div>' +
-    undoBtn +
-    '<button class="coach-prefs-revert" onclick="revertCoachPrefs()">Revert</button>';
+
+  let html = '';
+
+  // Permanent AI prefs summary
+  if(hasAiPrefs()){
+    const summary = (S.aiPrefs && S.aiPrefs.summary) || 'AI changes active';
+    const stack = (S && Array.isArray(S.aiUndoStack)) ? S.aiUndoStack : [];
+    const undoBtn = stack.length > 0
+      ? '<button class="coach-prefs-revert" onclick="undoLastCoachApply()" title="Restore the previous AI prefs state">Undo</button>'
+      : '';
+    html += '<div class="summary">🤖 ' + _esc(summary) + '</div>' +
+            undoBtn +
+            '<button class="coach-prefs-revert" onclick="revertCoachPrefs()">Revert</button>';
+  }
+
+  // Ephemeral session adjustments
+  if(hasSessionAdj){
+    const parts = [];
+    if(hasSkip){
+      const names = sa.skipToday.map(id => { const ex=findEx(id); return ex?ex.name:id; });
+      parts.push('⏭ Skipping: ' + names.join(', '));
+    }
+    if(hasSel){
+      for(const catId of Object.keys(sa.selectToday)){
+        const cat = _findCatById(catId);
+        const names = sa.selectToday[catId].map(id => {
+          const ex = cat ? (cat.exercises||[]).find(e=>e.id===id) : null;
+          return ex ? ex.name : id;
+        });
+        parts.push('📌 ' + (cat?cat.name:catId) + ': ' + names.join(', '));
+      }
+    }
+    html += (hasAiPrefs() ? '<div style="height:8px"></div>' : '') +
+      '<div class="summary" style="color:#5ec46a">🗓️ Session adjustments (today only):<br>' +
+      parts.map(p => _esc(p)).join('<br>') + '</div>' +
+      '<button class="coach-prefs-revert" onclick="clearSessionAdjustments()" style="color:#e07070">Clear</button>';
+  }
+
+  banner.innerHTML = html;
+}
+
+function clearSessionAdjustments(){
+  if(!S) return;
+  S.sessionAdjustments = {skipToday:[], selectToday:{}};
+  save();
+  renderCoachPrefsBanner();
+  if(typeof render === 'function') render();
+  showToast('Session adjustments cleared');
 }
 
 // CONVERSATION STATE -------------------------------------------------
@@ -4437,11 +4722,29 @@ async function askCoach(question){
       '2 consecutive sessions. Deload = 40% weight reduction, moderate reps, focus on form.\n' +
       '7. COMPOUND FIRST: Always schedule compound/main lifts before accessory isolation work.\n\n' +
 
+      '━━ INJURY AWARENESS & SUBSTITUTION PROTOCOL ━━\n' +
+      'Each exercise in the program carries muscle group metadata. When an athlete reports ' +
+      'an injury or soreness, substitute or skip exercises by their mechanics tag:\n' +
+      '• hamstring strain / soreness → AVOID: hip_dominant (RDL, SLDL), knee_flexion (leg curls, nordics)\n' +
+      '  → SAFE: knee_dominant (hack squat, leg press, leg ext), calf_isolation\n' +
+      '• calf strain → AVOID: calf_isolation, plyometric\n' +
+      '  → SAFE: most upper-body work; minimize load-bearing unilateral (lunges, step-ups)\n' +
+      '• lower back pain → AVOID: spinal_loading (barbell row, pendlay, RDL, SLDL, bb_squat)\n' +
+      '  → SAFE: cable/machine alternatives, unilateral work with lighter load\n' +
+      '• shoulder impingement → AVOID: overhead (OHP, overhead tricep extension), internal_rotation\n' +
+      '  → SAFE: horizontal_push at reduced ROM, isolation work below shoulder height\n' +
+      '• elbow tendinitis → AVOID: heavy elbow_extension (skull crushers), heavy elbow_flexion\n' +
+      '  → SAFE: high-rep cable work, reduce load 20-30%, avoid full lockout\n' +
+      'ALWAYS: (1) acknowledge the injury/soreness explicitly, (2) name which specific exercises ' +
+      'to skip and why (mechanics), (3) name which exercises are safe and why, ' +
+      '(4) set expectations (e.g. "your quad work can be full intensity today").\n\n' +
+
       '━━ WHAT YOU CAN DO ━━\n' +
       '• Answer any question about an exercise, the program, or the athlete\'s history\n' +
       '• Analyse progression trends, identify stagnation/plateau with specific data\n' +
       '• Add new exercises to the athlete\'s program catalog (via <changes> proposal)\n' +
       '• Boost or adjust selection limits for categories\n' +
+      '• Skip or force-select exercises for TODAY\'s session only (ephemeral — cleared next session)\n' +
       '• Recommend rep/weight targets with clear rationale from the logged data\n' +
       '• Suggest music additions to the playlist\n\n' +
 
@@ -4452,9 +4755,11 @@ async function askCoach(question){
       'a detailed breakdown is explicitly requested. No generic disclaimers. No fluff.\n\n' +
 
       '━━ WHEN TO APPEND A <changes> BLOCK ━━\n' +
-      'Append ONLY when: (1) user asks to add/swap/remove an exercise, (2) user asks to ' +
-      'adjust category limits, (3) user asks to add songs. For analysis, advice, or ' +
-      'questions — text only, no block.\n\n' +
+      'Append when: (1) user asks to add/swap/remove an exercise PERMANENTLY, (2) user asks to ' +
+      'adjust category limits, (3) user asks to add songs, (4) user describes an injury or asks ' +
+      'to skip/focus on specific muscles TODAY (use skip_today / select_today — ephemeral), ' +
+      '(5) user asks to focus on specific exercises this session.\n' +
+      'For analysis, general advice, or questions — text only, no block.\n\n' +
       'Schema (all top-level keys optional — include only what changes):\n' +
       '<changes>\n' +
       '{\n' +
@@ -4465,18 +4770,22 @@ async function askCoach(question){
       '      "rep": "<e.g. 6 to 10>", "sw": <number>, "unit": "<lb|lb DB|lb cable|BW|kg>",\n' +
       '      "equip": "<barbell|dumbbell|cable|machine|bodyweight>" }]\n' +
       '  },\n' +
-      '  "remove_exercises": ["<ex_id>", "<ex_id>"],\n' +
+      '  "remove_exercises": ["<ex_id>"],\n' +
+      '  "skip_today": ["<ex_id>", "<ex_id>"],\n' +
+      '  "select_today": { "<cat_id>": ["<ex_id>"] },\n' +
       '  "add_songs": [{ "name": "<title>", "artist": "<artist>" }]\n' +
       '}\n' +
       '</changes>\n' +
-      'Use exercise IDs EXACTLY as listed in PROGRAM below. ' +
-      'add_exercises = adds the exercise as a selectable option in the category (athlete ' +
-      'still picks it each session). Starting weight (sw) should be conservative but ' +
-      'realistic based on the athlete\'s existing lifts. ' +
-      'remove_exercises = permanently hides those exercises from the program (they will no ' +
-      'longer appear as options). Use when the athlete says they never want to do an ' +
-      'exercise again, has an injury preventing it, or asks for a swap. Can be undone via ' +
-      'the Undo button in the coach banner. ' +
+      'Use exercise IDs EXACTLY as listed in PROGRAM below.\n' +
+      'skip_today = hide these exercises from TODAY\'s session only (ephemeral, auto-cleared next session). ' +
+      'Use when athlete has an injury, soreness, or wants to cut an exercise today.\n' +
+      'select_today = force-select these exercises for TODAY\'s session only in the given category ' +
+      '(ephemeral). Use when athlete wants to focus on specific movements today.\n' +
+      'remove_exercises = PERMANENT removal — hides exercises from the program going forward. ' +
+      'Use ONLY when athlete says they never want to do it again or it\'s contraindicated long-term. ' +
+      'Can be undone via the Undo button in the coach banner.\n' +
+      'add_exercises = adds exercise as a selectable option (athlete still picks each session). ' +
+      'Starting weight (sw) should be conservative but realistic based on existing lifts.\n' +
       'add_songs: pick mainstream tracks Deezer indexes (EDM/hip-hop/electronic). Max 8. ' +
       'Avoid duplicates already in MUSIC CATALOG.\n\n' +
 
