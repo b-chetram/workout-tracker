@@ -1618,12 +1618,14 @@ function isExBoosted(catId, exId){
 }
 function hasAiPrefs(){
   if(!S || !S.aiPrefs) return false;
-  const cats  = S.aiPrefs.categories;
-  const adds  = S.aiPrefs.addedExercises;
-  const songs = S.aiPrefs.addedSongs;
+  const cats    = S.aiPrefs.categories;
+  const adds    = S.aiPrefs.addedExercises;
+  const songs   = S.aiPrefs.addedSongs;
+  const removed = S.aiPrefs.removedExercises;
   return !!((cats && Object.keys(cats).length > 0) ||
             (adds && Object.keys(adds).length > 0) ||
-            (Array.isArray(songs) && songs.length > 0));
+            (Array.isArray(songs) && songs.length > 0) ||
+            (Array.isArray(removed) && removed.length > 0));
 }
 
 // Merge AI-added songs into the SONGS array. Idempotent — skips
@@ -1713,6 +1715,64 @@ function unapplyAddedExercises(addedMap){
     }
   }
 }
+// Remove coach-hidden exercises from the live catalog. Idempotent.
+// Stores removed IDs in S.aiPrefs.removedExercises.
+function applyRemovedExercises(){
+  if(!S || !S.aiPrefs || !Array.isArray(S.aiPrefs.removedExercises)) return;
+  const removeIds = new Set(S.aiPrefs.removedExercises);
+  if(removeIds.size === 0) return;
+  for(const day of DAYS){
+    if(!day || !Array.isArray(day.categories)) continue;
+    for(const cat of day.categories){
+      if(Array.isArray(cat.exercises)){
+        cat.exercises = cat.exercises.filter(e => !removeIds.has(e.id));
+      }
+    }
+    if(Array.isArray(day.exercises)){
+      day.exercises = day.exercises.filter(e => !removeIds.has(e.id));
+    }
+  }
+  // Clear any active picks for the removed exercises
+  if(S.selectedEx){
+    for(const catId of Object.keys(S.selectedEx)){
+      if(Array.isArray(S.selectedEx[catId])){
+        S.selectedEx[catId] = S.selectedEx[catId].filter(id => !removeIds.has(id));
+      }
+    }
+  }
+}
+
+// Restore coach-removed exercises from the immutable EXERCISE_DB.
+// Called when Undo or Revert runs.
+function unapplyRemovedExercises(removedIds){
+  if(!Array.isArray(removedIds) || removedIds.length === 0) return;
+  const restoreSet = new Set(removedIds);
+  // Walk EXERCISE_DB to find original exercise objects
+  for(const dayKey of Object.keys(EXERCISE_DB)){
+    const dbDay = EXERCISE_DB[dayKey];
+    if(!dbDay || !Array.isArray(dbDay.categories)) continue;
+    // Find the corresponding live DAYS entry
+    const liveDay = DAYS.find(d => d.id === dayKey);
+    if(!liveDay) continue;
+    for(const dbCat of dbDay.categories){
+      if(!Array.isArray(dbCat.exercises)) continue;
+      const liveCat = (liveDay.categories || []).find(c => c.id === dbCat.id);
+      if(!liveCat) continue;
+      const existingIds = new Set(liveCat.exercises.map(e => e.id));
+      for(const ex of dbCat.exercises){
+        if(restoreSet.has(ex.id) && !existingIds.has(ex.id)){
+          liveCat.exercises.push(ex);
+          existingIds.add(ex.id);
+          if(!Array.isArray(liveDay.exercises)) liveDay.exercises = [];
+          if(!liveDay.exercises.some(e => e.id === ex.id)){
+            liveDay.exercises.push(ex);
+          }
+        }
+      }
+    }
+  }
+}
+
 function getExNativeDay(id){
   for(const d of DAYS)if((d.exercises||[]).some(e=>e.id===id))return d.id;
   return getDay().id;
@@ -3322,12 +3382,12 @@ function handleImportFileChosen(event){
                 + 'If you want to keep your current data, tap Export first.';
       if(!confirm(msg)) return;
 
-      // Tear out current AI additions from runtime BEFORE replacing S,
-      // otherwise stale exercises/songs hang around in the catalog
-      // alongside whatever the imported backup wants.
+      // Tear out current AI additions/removals from runtime BEFORE replacing S,
+      // otherwise stale exercises/songs hang around in the catalog.
       if(S && S.aiPrefs){
-        if(S.aiPrefs.addedExercises) unapplyAddedExercises(S.aiPrefs.addedExercises);
-        if(S.aiPrefs.addedSongs)     unapplyAddedSongs(S.aiPrefs.addedSongs);
+        if(S.aiPrefs.addedExercises)   unapplyAddedExercises(S.aiPrefs.addedExercises);
+        if(S.aiPrefs.addedSongs)       unapplyAddedSongs(S.aiPrefs.addedSongs);
+        if(S.aiPrefs.removedExercises) unapplyRemovedExercises(S.aiPrefs.removedExercises);
       }
 
       // Replace state. Preserve the load()-style defensive defaults.
@@ -3349,6 +3409,7 @@ function handleImportFileChosen(event){
       }
       applyAddedExercises();
       applyAddedSongs();
+      applyRemovedExercises();
 
       save();
       cancelRestTimer();
@@ -3828,18 +3889,36 @@ function parseCoachProposal(text){
     }
   }
 
-  const hasCats  = Object.keys(cleanCats).length > 0;
-  const hasAdds  = Object.keys(cleanAdds).length > 0;
-  const hasSongs = cleanSongs.length > 0;
-  if(!hasCats && !hasAdds && !hasSongs) return { visibleText: text.replace(m[0], '').trim(), proposal: null };
+  // Validate "remove_exercises": array of exercise IDs to hide from the catalog.
+  // Only accepts IDs that actually exist in the program so the AI can't remove
+  // arbitrary strings. Deduped, capped at 20.
+  const cleanRemove = [];
+  if(parsed && Array.isArray(parsed.remove_exercises)){
+    const seen = new Set();
+    for(const id of parsed.remove_exercises.slice(0, 20)){
+      if(typeof id !== 'string') continue;
+      if(seen.has(id)) continue;
+      if(!findEx(id)) continue; // must exist
+      seen.add(id);
+      cleanRemove.push(id);
+    }
+  }
+
+  const hasCats    = Object.keys(cleanCats).length > 0;
+  const hasAdds    = Object.keys(cleanAdds).length > 0;
+  const hasSongs   = cleanSongs.length > 0;
+  const hasRemove  = cleanRemove.length > 0;
+  if(!hasCats && !hasAdds && !hasSongs && !hasRemove)
+    return { visibleText: text.replace(m[0], '').trim(), proposal: null };
 
   const visibleText = text.replace(m[0], '').trim();
   const proposal = {
     summary: typeof parsed.summary === 'string' ? parsed.summary.slice(0, 200) : 'AI-proposed changes'
   };
-  if(hasCats)  proposal.categories    = cleanCats;
-  if(hasAdds)  proposal.add_exercises = cleanAdds;
-  if(hasSongs) proposal.add_songs     = cleanSongs;
+  if(hasCats)    proposal.categories       = cleanCats;
+  if(hasAdds)    proposal.add_exercises    = cleanAdds;
+  if(hasSongs)   proposal.add_songs        = cleanSongs;
+  if(hasRemove)  proposal.remove_exercises = cleanRemove;
   return { visibleText, proposal };
 }
 
@@ -3951,6 +4030,12 @@ function _proposalDiffText(proposal){
       lines.push('+ Music: ' + s.n + ' — ' + s.a);
     }
   }
+  if(Array.isArray(proposal.remove_exercises)){
+    for(const id of proposal.remove_exercises){
+      const ex = findEx(id);
+      lines.push('✕ Remove: ' + (ex ? ex.name : id));
+    }
+  }
   return lines.join('\n');
 }
 
@@ -3978,16 +4063,18 @@ function applyCoachProposal(historyIdx){
     }
   }
 
-  // Preserve previously-added exercises and songs across applies
-  // (latest summary + category overrides win, but additions accumulate).
-  const prevAdds  = (S.aiPrefs && S.aiPrefs.addedExercises) || {};
-  const prevSongs = (S.aiPrefs && Array.isArray(S.aiPrefs.addedSongs)) ? S.aiPrefs.addedSongs.slice() : [];
+  // Preserve previously-added/removed exercises and songs across applies
+  // (latest summary + category overrides win, but additions/removals accumulate).
+  const prevAdds    = (S.aiPrefs && S.aiPrefs.addedExercises) || {};
+  const prevSongs   = (S.aiPrefs && Array.isArray(S.aiPrefs.addedSongs)) ? S.aiPrefs.addedSongs.slice() : [];
+  const prevRemoved = (S.aiPrefs && Array.isArray(S.aiPrefs.removedExercises)) ? S.aiPrefs.removedExercises.slice() : [];
   S.aiPrefs = {
-    appliedAt:      new Date().toISOString(),
-    summary:        msg.proposal.summary,
-    categories:     msg.proposal.categories || {},
-    addedExercises: prevAdds,
-    addedSongs:     prevSongs
+    appliedAt:        new Date().toISOString(),
+    summary:          msg.proposal.summary,
+    categories:       msg.proposal.categories || {},
+    addedExercises:   prevAdds,
+    addedSongs:       prevSongs,
+    removedExercises: prevRemoved
   };
   // Merge any newly-proposed additions into addedExercises
   if(msg.proposal.add_exercises){
@@ -4016,13 +4103,31 @@ function applyCoachProposal(historyIdx){
     }
     applyAddedSongs();
   }
+  // Accumulate new removals and apply them to the runtime catalog.
+  if(Array.isArray(msg.proposal.remove_exercises) && msg.proposal.remove_exercises.length){
+    const existingRemoved = new Set(S.aiPrefs.removedExercises);
+    for(const id of msg.proposal.remove_exercises){
+      if(!existingRemoved.has(id)){
+        S.aiPrefs.removedExercises.push(id);
+        existingRemoved.add(id);
+      }
+    }
+    applyRemovedExercises();
+  }
   // Wipe explicit picks for any touched category so new defaults
   // (respecting overrides + including new exercises) repopulate.
   if(S.selectedEx){
     const touched = new Set();
     Object.keys(msg.proposal.categories || {}).forEach(c => touched.add(c));
     Object.keys(msg.proposal.add_exercises || {}).forEach(c => touched.add(c));
-    for(const catId of touched) delete S.selectedEx[catId];
+    if(Array.isArray(msg.proposal.remove_exercises)){
+      // For removed exercises, clear picks in ALL categories (we don't
+      // know which category each exercise belongs to at this point since
+      // it may already be filtered out of the live catalog).
+      Object.keys(S.selectedEx).forEach(c => delete S.selectedEx[c]);
+    } else {
+      for(const catId of touched) delete S.selectedEx[catId];
+    }
   }
   msg.proposalApplied = true;
   saveCoachHistory();
@@ -4052,6 +4157,9 @@ function revertCoachPrefs(){
   if(S.aiPrefs && Array.isArray(S.aiPrefs.addedSongs)){
     unapplyAddedSongs(S.aiPrefs.addedSongs);
   }
+  if(S.aiPrefs && Array.isArray(S.aiPrefs.removedExercises)){
+    unapplyRemovedExercises(S.aiPrefs.removedExercises);
+  }
   delete S.aiPrefs;
   S.aiUndoStack = [];
   if(S.selectedEx) S.selectedEx = {};
@@ -4069,20 +4177,23 @@ function revertCoachPrefs(){
 function undoLastCoachApply(){
   const stack = (S && Array.isArray(S.aiUndoStack)) ? S.aiUndoStack : [];
   if(stack.length === 0) return;
-  // Tear down current additions
+  // Tear down current additions and removals
   if(S.aiPrefs){
-    if(S.aiPrefs.addedExercises) unapplyAddedExercises(S.aiPrefs.addedExercises);
-    if(S.aiPrefs.addedSongs)     unapplyAddedSongs(S.aiPrefs.addedSongs);
+    if(S.aiPrefs.addedExercises)  unapplyAddedExercises(S.aiPrefs.addedExercises);
+    if(S.aiPrefs.addedSongs)      unapplyAddedSongs(S.aiPrefs.addedSongs);
+    if(S.aiPrefs.removedExercises) unapplyRemovedExercises(S.aiPrefs.removedExercises);
   }
   // Restore the previous snapshot
   const prev = stack.pop();
   S.aiUndoStack = stack;
   if(prev && (Object.keys(prev.categories || {}).length ||
               Object.keys(prev.addedExercises || {}).length ||
-              (Array.isArray(prev.addedSongs) && prev.addedSongs.length))){
+              (Array.isArray(prev.addedSongs) && prev.addedSongs.length) ||
+              (Array.isArray(prev.removedExercises) && prev.removedExercises.length))){
     S.aiPrefs = prev;
     applyAddedExercises();
     applyAddedSongs();
+    applyRemovedExercises();
   } else {
     delete S.aiPrefs;
   }
@@ -4274,9 +4385,9 @@ async function askCoach(question){
       'a detailed breakdown is explicitly requested. No generic disclaimers. No fluff.\n\n' +
 
       '━━ WHEN TO APPEND A <changes> BLOCK ━━\n' +
-      'Append ONLY when: (1) user asks to add/swap an exercise, (2) user asks to adjust ' +
-      'category limits, (3) user asks to add songs. For analysis, advice, or questions — ' +
-      'text only, no block.\n\n' +
+      'Append ONLY when: (1) user asks to add/swap/remove an exercise, (2) user asks to ' +
+      'adjust category limits, (3) user asks to add songs. For analysis, advice, or ' +
+      'questions — text only, no block.\n\n' +
       'Schema (all top-level keys optional — include only what changes):\n' +
       '<changes>\n' +
       '{\n' +
@@ -4287,13 +4398,18 @@ async function askCoach(question){
       '      "rep": "<e.g. 6 to 10>", "sw": <number>, "unit": "<lb|lb DB|lb cable|BW|kg>",\n' +
       '      "equip": "<barbell|dumbbell|cable|machine|bodyweight>" }]\n' +
       '  },\n' +
+      '  "remove_exercises": ["<ex_id>", "<ex_id>"],\n' +
       '  "add_songs": [{ "name": "<title>", "artist": "<artist>" }]\n' +
       '}\n' +
       '</changes>\n' +
-      'Use category IDs and exercise IDs EXACTLY as listed in PROGRAM below. ' +
-      'add_exercises = adds the exercise as a selectable option in that category (athlete ' +
-      'still picks it each session — it does not auto-schedule). Starting weight (sw) should ' +
-      'be conservative but realistic based on the athlete\'s existing lifts. ' +
+      'Use exercise IDs EXACTLY as listed in PROGRAM below. ' +
+      'add_exercises = adds the exercise as a selectable option in the category (athlete ' +
+      'still picks it each session). Starting weight (sw) should be conservative but ' +
+      'realistic based on the athlete\'s existing lifts. ' +
+      'remove_exercises = permanently hides those exercises from the program (they will no ' +
+      'longer appear as options). Use when the athlete says they never want to do an ' +
+      'exercise again, has an injury preventing it, or asks for a swap. Can be undone via ' +
+      'the Undo button in the coach banner. ' +
       'add_songs: pick mainstream tracks Deezer indexes (EDM/hip-hop/electronic). Max 8. ' +
       'Avoid duplicates already in MUSIC CATALOG.\n\n' +
 
@@ -4393,6 +4509,7 @@ load();
 // immediately on reload.
 applyAddedExercises();
 applyAddedSongs();
+applyRemovedExercises();
 render();
 // Re-acquire wake lock if the user reopens the app mid-session.
 // Note: on some iOS versions this first call may fail silently because
