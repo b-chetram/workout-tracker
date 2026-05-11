@@ -414,12 +414,7 @@ input[type=number]::-webkit-inner-spin-button{-webkit-appearance:none}
     <div id="coach-chat-area" style="display:none">
       <!-- Active AI prefs banner — only shown when prefs exist -->
       <div id="coach-prefs-banner" style="display:none"></div>
-      <div style="display:flex;flex-wrap:wrap;gap:6px;margin:14px 0 12px">
-        <button class="coach-quick" onclick="askCoach('Suggest weights for my next session based on my recent training')">Suggest weights</button>
-        <button class="coach-quick" onclick="askCoach('Should I deload this week? Use my recent RIR and weight progression to decide.')">Deload check</button>
-        <button class="coach-quick" onclick="askCoach('Recommend exercise alternatives for any lifts I have stalled on')">Alt exercises</button>
-        <button class="coach-quick" onclick="askCoach('Give me a quick overall analysis of how my training has been trending')">Analyze training</button>
-      </div>
+      <div style="display:flex;flex-wrap:wrap;gap:6px;margin:14px 0 12px" id="coach-quick-btns"></div>
       <textarea id="coach-input" class="coach-input" placeholder="Ask a follow-up or new question…  (Enter to send · Shift+Enter newline)" onkeydown="coachInputKey(event)"></textarea>
       <button class="sheet-confirm" style="background:#e8a838;color:#000;margin-top:10px" onclick="askCoachCustom()">Ask Coach →</button>
       <div id="coach-thread-wrap" style="display:none;margin-top:16px">
@@ -1945,6 +1940,10 @@ function getPrevSessions(id){
 }
 function getNonDeloadSessions(id){
   return getPrevSessions(id).filter(e=>{
+    // Exclude intentionally sub-maximal sessions (pump / light days tagged
+    // by the AI coach). These should not influence progression decisions —
+    // high reps or low weights on a pump day are intentional, not adaptation.
+    if(e.intent === 'pump' || e.intent === 'light') return false;
     // Prefer the session-level flag set at log-time (accurate even when
     // a deload ends mid-week and heavy sessions follow in the same week).
     if(e.deload === true)  return false;
@@ -2084,9 +2083,14 @@ function getSelectedForCat(catId, day){
     // If the recommended is skipped, fall back to the next non-skipped exercise
     if(rotId.length) return rotId;
     const fallback = applySkip(cat.exercises.map(e=>e.id));
-    // If every exercise in the category is skipped, still show the rotation
-    // pick so the session card never silently drops a main lift entirely.
-    return fallback.length ? fallback.slice(0, 1) : [rotation.recommended];
+    if(fallback.length) return fallback.slice(0, 1);
+    // Every exercise in this category was skipped — that's not actionable.
+    // Show the original rotation pick and warn the user so they know the
+    // skip was ignored (rather than silently rendering the "skipped" exercise).
+    const ex = findEx(rotation.recommended);
+    const exName = ex ? ex.name : rotation.recommended;
+    showToast('⚠️ ' + exName + ' shown — all options in this category are skipped');
+    return [rotation.recommended];
   }
 
   // For non-main: prefer exercises the user has history with, but
@@ -2710,8 +2714,12 @@ function confirmSet(){
   if(!entry){
     // Tag the session at creation so progression ignores deload sets even
     // when the deload ends mid-week and heavy sessions follow in the same week.
+    // Also stamp the session intent (pump/light) so those sessions are similarly
+    // excluded from the weight progression algorithm — intentionally light
+    // days shouldn't look like adaptation events or trigger weight jumps.
     entry={week:S.week,session:S.session,day:getExNativeDay(exId),date:todayStr(),
-           altIdx:ex.alt?getAltIdx(ex):null,deload:isCurrentDeload()?true:false,sets:[]};
+           altIdx:ex.alt?getAltIdx(ex):null,deload:isCurrentDeload()?true:false,
+           intent:S.sessionTag||null,sets:[]};
     DB[exId].push(entry);
   }
   if(!entry.sets)entry.sets=[];
@@ -2844,11 +2852,15 @@ function showSessStep2(){
   const selMap   = (adj.selectToday && typeof adj.selectToday === 'object') ? adj.selectToday : {};
   const hasSkips = skipList.length > 0;
   const hasSels  = Object.keys(selMap).length > 0;
-  const hasAdjustments = hasSkips || hasSels;
+  const hasTag   = !!adj.sessionTag;
+  const hasAdjustments = hasSkips || hasSels || hasTag;
 
   if(hasAdjustments){
     // Build a readable summary of what the coach set up
     const lines = [];
+    if(adj.sessionTag){
+      lines.push(adj.sessionTag === 'pump' ? '🏋️ Pump day — high reps, feel the muscle' : '😌 Light session');
+    }
     if(hasSkips){
       const names = skipList.map(id => { const ex = findEx(id); return ex ? ex.name : id; });
       lines.push('Skipping: ' + names.join(', '));
@@ -2906,6 +2918,12 @@ function confirmSession(){
   // Do NOT clear sessionAdjustments here — they were set during the
   // pre-session coach flow and must remain active throughout this session.
   // They are cleared in openSessOverlay() when the NEXT session is opened.
+
+  // Promote the session_tag (pump/light) from adjustments to a top-level
+  // flag so confirmSet() can stamp it on every history entry. This lets
+  // the progression algorithm skip these sets (like deload sessions).
+  S.sessionTag = (S.sessionAdjustments && S.sessionAdjustments.sessionTag) || null;
+
   window._currentSong=getRandomSong();
   cancelRestTimer();
   requestWakeLock();
@@ -3842,6 +3860,40 @@ function getCoachKey(){
 function setCoachKeyLS(k){ try{ localStorage.setItem(COACH_KEY_LS, k); }catch(e){} }
 function clearCoachKey(){ try{ localStorage.removeItem(COACH_KEY_LS); }catch(e){} }
 
+// Render context-aware quick-action buttons. When the user is in the
+// pre-session check-in flow the buttons shift toward today-focused
+// adjustments. Outside a session they show analysis/planning prompts.
+function renderCoachQuickBtns(){
+  const el = document.getElementById('coach-quick-btns');
+  if(!el) return;
+  const day = (typeof SESS !== 'undefined' && SESS && typeof DAYS !== 'undefined')
+    ? DAYS[SESS.dayIdx] : null;
+  const dayLabel = (day && !day.isRest) ? day.label : null;
+  const dayMuscles = (day && day.sub) ? day.sub : '';
+
+  let btns;
+  if(_preSessionMode && dayLabel){
+    // Pre-session context: focus on today's session
+    btns = [
+      { label: '💪 Pump day', q: `I want a pump session for ${dayLabel} today — good muscle feel, higher reps, no grinding heavy sets. Please adjust my selection and tag it as a pump day.` },
+      { label: '🤕 Injury / soreness', q: `I have some soreness or discomfort going into ${dayLabel} (${dayMuscles}). Walk me through what to skip or modify and why.` },
+      { label: '🎯 Focus today', q: `For ${dayLabel} today I want to focus on a specific muscle — suggest which exercises to prioritize and which to drop.` },
+      { label: '⚡ Suggest weights', q: `Suggest my working weights for ${dayLabel} today based on my recent history.` }
+    ];
+  } else {
+    // General / mid-session context
+    btns = [
+      { label: 'Suggest weights', q: 'Suggest weights for my next session based on my recent training' },
+      { label: 'Deload check', q: 'Should I deload this week? Use my recent RIR and weight progression to decide.' },
+      { label: 'Alt exercises', q: 'Recommend exercise alternatives for any lifts I have stalled on' },
+      { label: 'Analyze training', q: 'Give me a quick overall analysis of how my training has been trending' }
+    ];
+  }
+  el.innerHTML = btns.map(b =>
+    `<button class="coach-quick" onclick="askCoach(${JSON.stringify(b.q)})">${b.label}</button>`
+  ).join('');
+}
+
 function openCoachSheet(){
   const overlay = document.getElementById('coach-overlay');
   const hasKey  = !!getCoachKey();
@@ -3851,6 +3903,7 @@ function openCoachSheet(){
   // will re-show it if warranted (i.e. coming from pre-session AND a
   // proposal was already applied earlier in this same open).
   _updatePresessionFooter();
+  renderCoachQuickBtns();
   overlay.classList.remove('hidden');
   if(hasKey){
     renderCoachPrefsBanner();
@@ -3925,9 +3978,10 @@ function _updatePresessionFooter(){
   }
   // Show the start button only once the user has actually applied something
   const adj = S.sessionAdjustments || {};
-  const hasSkips = Array.isArray(adj.skipToday) && adj.skipToday.length > 0;
-  const hasSels  = adj.selectToday && Object.keys(adj.selectToday).length > 0;
-  if(!hasSkips && !hasSels){
+  const hasSkips  = Array.isArray(adj.skipToday) && adj.skipToday.length > 0;
+  const hasSels   = adj.selectToday && Object.keys(adj.selectToday).length > 0;
+  const hasTag    = !!adj.sessionTag;
+  if(!hasSkips && !hasSels && !hasTag){
     footer.style.display = 'none';
     footer.innerHTML = '';
     return;
@@ -4116,18 +4170,20 @@ function buildCoachContext(){
       const allSess = (DB[exId] || []).filter(e => e && e.sets && e.sets.length > 0);
       if(allSess.length === 0) continue;
 
-      // Last 5 sessions for display
+      // Last 5 sessions for display — annotate pump/light/deload sessions
       const recent = allSess.slice(-5);
       const histStr = recent.map(e => {
         const sets = (e.sets || []).filter(s => s).map(s => {
           const r = (s.rir == null || s.rir === '') ? '?' : s.rir;
           return s.weight + '×' + (s.reps ?? '?') + '@RIR' + r;
         }).join(', ');
-        return 'wk' + e.week + 's' + e.session + '(' + (e.date||'?') + '): ' + sets;
+        const tag = e.intent ? ' [' + e.intent.toUpperCase() + ' DAY]' : (e.deload ? ' [DELOAD]' : '');
+        return 'wk' + e.week + 's' + e.session + '(' + (e.date||'?') + ')' + tag + ': ' + sets;
       }).join(' | ');
 
-      // Progression status — analyse last 3 non-deload sessions
+      // Progression status — analyse last 3 non-deload, non-pump sessions
       const ndSess = allSess.filter(e =>
+        (e.intent === 'pump' || e.intent === 'light') ? false :
         e.deload===true ? false : e.deload===false ? true : !isDeload(e.week));
       const last3 = ndSess.slice(-3);
       let status = '';
@@ -4196,9 +4252,10 @@ function buildCoachContext(){
     for(const k of fbKeys){
       const f = fb[k] || {};
       const bits = [];
-      if(f.pump   != null) bits.push('pump '    + f.pump   + '/5');
-      if(f.sore   != null) bits.push('soreness '+ f.sore   + '/5');
-      if(f.energy != null) bits.push('energy '  + f.energy + '/5');
+      // Scale is 0–2 (0=none/low, 1=okay/moderate, 2=great/high)
+      if(f.pump   != null) bits.push('pump '    + f.pump   + '/2 (0=none,2=great)');
+      if(f.sore   != null) bits.push('soreness '+ f.sore   + '/2 (0=fresh,2=very sore)');
+      if(f.energy != null) bits.push('energy '  + f.energy + '/2 (0=low,2=high)');
       if(f.notes)          bits.push('"' + String(f.notes).slice(0, 80) + '"');
       lines.push('- ' + k + ': ' + (bits.join(', ') || '(no detail)'));
     }
@@ -4361,10 +4418,22 @@ function parseCoachProposal(text){
       const arr = parsed.select_today[catId];
       if(!Array.isArray(arr)) continue;
       const validIds = new Set((cat.exercises || []).map(e => e.id));
-      const valid = arr.filter(id => typeof id === 'string' && validIds.has(id)).slice(0, cat.exercises.length);
+      // Slice to cat.max (the category pick limit) not cat.exercises.length —
+      // otherwise the AI can force 4 exercises into a single-pick main-lift slot.
+      const pickLimit = cat.max || cat.exercises.length;
+      const valid = arr.filter(id => typeof id === 'string' && validIds.has(id)).slice(0, pickLimit);
       if(valid.length) cleanSelectToday[catId] = valid;
     }
   }
+
+  // Validate "session_tag": optional ephemeral label for this session.
+  // Valid values: "pump" (intentionally sub-maximal, high-rep) or "light".
+  // Tagged sessions are excluded from the weight-progression algorithm so
+  // the algo doesn't misinterpret intentionally easy reps as adaptation.
+  const VALID_SESSION_TAGS = new Set(['pump', 'light']);
+  const cleanSessionTag = (parsed && typeof parsed.session_tag === 'string' &&
+    VALID_SESSION_TAGS.has(parsed.session_tag.toLowerCase()))
+    ? parsed.session_tag.toLowerCase() : null;
 
   const hasCats        = Object.keys(cleanCats).length > 0;
   const hasAdds        = Object.keys(cleanAdds).length > 0;
@@ -4372,7 +4441,8 @@ function parseCoachProposal(text){
   const hasRemove      = cleanRemove.length > 0;
   const hasSkipToday   = cleanSkipToday.length > 0;
   const hasSelectToday = Object.keys(cleanSelectToday).length > 0;
-  if(!hasCats && !hasAdds && !hasSongs && !hasRemove && !hasSkipToday && !hasSelectToday)
+  const hasSessionTag  = !!cleanSessionTag;
+  if(!hasCats && !hasAdds && !hasSongs && !hasRemove && !hasSkipToday && !hasSelectToday && !hasSessionTag)
     return { visibleText: text.replace(m[0], '').trim(), proposal: null };
 
   const visibleText = text.replace(m[0], '').trim();
@@ -4385,6 +4455,7 @@ function parseCoachProposal(text){
   if(hasRemove)        proposal.remove_exercises = cleanRemove;
   if(hasSkipToday)     proposal.skip_today       = cleanSkipToday;
   if(hasSelectToday)   proposal.select_today     = cleanSelectToday;
+  if(hasSessionTag)    proposal.session_tag      = cleanSessionTag;
   return { visibleText, proposal };
 }
 
@@ -4654,6 +4725,14 @@ function applyCoachProposal(historyIdx){
       // selection takes precedence.
       if(S.selectedEx) delete S.selectedEx[catId];
     }
+  }
+
+  // Apply session_tag (pump / light) — stored in sessionAdjustments so it
+  // survives into confirmSession() and gets stamped onto every history entry
+  // created this session, letting the progression algorithm ignore these sets.
+  if(msg.proposal.session_tag){
+    if(!S.sessionAdjustments) S.sessionAdjustments = {skipToday:[], selectToday:{}};
+    S.sessionAdjustments.sessionTag = msg.proposal.session_tag;
   }
 
   msg.proposalApplied = true;
@@ -4947,8 +5026,20 @@ async function askCoach(question){
       'lengths under load, and movements the athlete executes well. Rotation every 4-8 weeks ' +
       'prevents adaptation plateaus.\n' +
       '6. DELOAD: Recommend a deload every 8-12 sessions or when performance declines ' +
-      '2 consecutive sessions. Deload = 40% weight reduction, moderate reps, focus on form.\n' +
-      '7. COMPOUND FIRST: Always schedule compound/main lifts before accessory isolation work.\n\n' +
+      '2 consecutive sessions. Deload = 40% weight reduction (use ~60% of working weight), ' +
+      'moderate reps (mid-range), focus on form and feel.\n' +
+      '7. COMPOUND FIRST: Always schedule compound/main lifts before accessory isolation work.\n' +
+      '8. PUMP / HYPERTROPHY DAYS: When the athlete explicitly wants a "pump," lower intensity, ' +
+      'or a mental break from heavy loading — this is valid and supported. A pump day means: ' +
+      '(a) shift selection to machine/cable isolation work over barbell compounds, ' +
+      '(b) work at the TOP of all rep ranges (e.g. 15–20 on a 10–15 range), ' +
+      '(c) rest 45–60s between sets instead of 2–3min, ' +
+      '(d) weight should be ~60–70% of normal working weight — just enough to feel the muscle. ' +
+      'Use select_today to swap in isolation exercises and skip_today to remove heavy compounds. ' +
+      'ALWAYS tag the session with session_tag: "pump" in the changes block so the progression ' +
+      'algorithm knows to ignore these lighter sets when calculating next-session weights. ' +
+      'Tell the athlete: "Your weights/reps from today won\'t reset your progression — the ' +
+      'algorithm skips tagged sessions. Next session, your normal working weights apply."\n\n' +
 
       '━━ INJURY AWARENESS & SUBSTITUTION PROTOCOL ━━\n' +
       'Each exercise in the program carries muscle group metadata. When an athlete reports ' +
@@ -4973,8 +5064,17 @@ async function askCoach(question){
       '• Add new exercises to the athlete\'s program catalog (via <changes> proposal)\n' +
       '• Boost or adjust selection limits for categories\n' +
       '• Skip or force-select exercises for TODAY\'s session only (ephemeral — cleared next session)\n' +
+      '• Tag today\'s session as "pump" or "light" to protect progression data (session_tag)\n' +
       '• Recommend rep/weight targets with clear rationale from the logged data\n' +
+      '• Suggest tips on technique, tempo, mind-muscle connection, and rest periods\n' +
       '• Suggest music additions to the playlist\n\n' +
+
+      '━━ WHAT YOU MUST NOT DO ━━\n' +
+      '• Do NOT skip every exercise in a main-lift category (mark compounds with skip_today ' +
+        'but keep at least one machine/cable alternative via select_today so the slot is filled)\n' +
+      '• Do NOT use remove_exercises when the athlete only wants to skip for today (use skip_today)\n' +
+      '• Do NOT suggest weights for exercises that are not listed in PROGRAM below\n' +
+      '• Do NOT recommend a weight jump unless the logged data clearly supports it\n\n' +
 
       '━━ RESPONSE STYLE ━━\n' +
       'Direct and data-driven. Lead with the key finding, then the recommendation. ' +
@@ -5001,6 +5101,7 @@ async function askCoach(question){
       '  "remove_exercises": ["<ex_id>"],\n' +
       '  "skip_today": ["<ex_id>", "<ex_id>"],\n' +
       '  "select_today": { "<cat_id>": ["<ex_id>"] },\n' +
+      '  "session_tag": "pump",\n' +
       '  "add_songs": [{ "name": "<title>", "artist": "<artist>" }]\n' +
       '}\n' +
       '</changes>\n' +
@@ -5008,7 +5109,10 @@ async function askCoach(question){
       'skip_today = hide these exercises from TODAY\'s session only (ephemeral, auto-cleared next session). ' +
       'Use when athlete has an injury, soreness, or wants to cut an exercise today.\n' +
       'select_today = force-select these exercises for TODAY\'s session only in the given category ' +
-      '(ephemeral). Use when athlete wants to focus on specific movements today.\n' +
+      '(ephemeral, respects cat max pick limit). Use when athlete wants to focus on specific movements today.\n' +
+      'session_tag = "pump" or "light". Tags the whole session so the progression algorithm excludes ' +
+      'it when calculating next-session weights. Always include when the athlete is doing intentional ' +
+      'sub-maximal work (pump day, easy recovery session, post-injury return-to-train).\n' +
       'remove_exercises = PERMANENT removal — hides exercises from the program going forward. ' +
       'Use ONLY when athlete says they never want to do it again or it\'s contraindicated long-term. ' +
       'Can be undone via the Undo button in the coach banner.\n' +
@@ -5035,7 +5139,7 @@ async function askCoach(question){
         model: COACH_MODEL,
         messages: messages,
         temperature: 0.55,
-        max_tokens: 750
+        max_tokens: 1400
       })
     });
 
