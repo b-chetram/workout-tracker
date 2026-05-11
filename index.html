@@ -338,16 +338,27 @@ input[type=number]::-webkit-inner-spin-button{-webkit-appearance:none}
       </div>
       <div class="day-picker" id="sess-day-picker"></div>
     </div>
-    <div style="margin-top:16px;padding:14px;background:#111;border-radius:14px;border:1px solid #2a2a2a">
-      <div style="font-size:11px;color:#e8a838;text-transform:uppercase;letter-spacing:1.5px;font-weight:800;margin-bottom:8px">💬 Pre-Session Check-In</div>
-      <div style="font-size:13px;color:rgba(255,255,255,.5);margin-bottom:10px;line-height:1.4">Injuries, soreness, want to focus on something specific today? Chat with the coach before you start.</div>
-      <button onclick="openPreSessionCoach()"
-        style="width:100%;border-radius:10px;padding:11px;font-size:14px;font-weight:700;background:#1c2a1c;color:#5ec46a;border:1.5px solid #2a3a2a">
-        Chat with Coach →
-      </button>
+    <!-- Step 1: day picker confirmed, go to check-in -->
+    <div id="sess-step1">
+      <button class="sheet-confirm" id="sess-confirm-btn" onclick="sessGoToCheckIn()" style="margin-top:18px">Continue →</button>
+      <button class="sheet-cancel" onclick="closeSessSheet()">Cancel</button>
     </div>
-    <button class="sheet-confirm" id="sess-confirm-btn" onclick="confirmSession()" style="margin-top:12px">Start Session →</button>
-    <button class="sheet-cancel" onclick="closeSessSheet()">Cancel</button>
+
+    <!-- Step 2: coach check-in — always shown before session actually starts -->
+    <div id="sess-step2" style="display:none;margin-top:16px">
+      <div style="text-align:center;padding:4px 0 14px">
+        <div style="font-size:20px;font-weight:800;margin-bottom:6px">Ready to train? 💪</div>
+        <div style="font-size:14px;color:rgba(255,255,255,.4);line-height:1.5">Any injuries, soreness, or specific<br>focus for today?</div>
+      </div>
+      <button onclick="openPreSessionCoach()"
+        style="width:100%;border-radius:14px;padding:15px;font-size:16px;font-weight:700;background:#1c2a1c;color:#5ec46a;border:1.5px solid #2a3a2a;margin-bottom:10px;display:block">
+        💬 Yes — chat with Coach first
+      </button>
+      <button id="sess-start-btn" class="sheet-confirm" onclick="confirmSession()">
+        Nope, let's go →
+      </button>
+      <button class="sheet-cancel" onclick="showSessStep1()">← Change day / week</button>
+    </div>
   </div>
 </div>
 
@@ -2414,12 +2425,44 @@ function getRecDayIdx(){
   const nextId=DAY_SEQ[(li+1)%DAY_SEQ.length];
   return DAYS.findIndex(d=>d.id===nextId);
 }
+// Find the most recently LOGGED session across all exercises in DB.
+// Returns {week, session, dayId} or null if no history exists.
+// This is the ground truth for session sequencing — not S.week/S.session,
+// which can drift if the user opened sessions without logging sets.
+function getLastRealSession(){
+  const SKIP={skipped:1,feedback:1,deloadWeeks:1,notes:1};
+  let bestWeek=0,bestSession=0,bestDay=null;
+  for(const exId of Object.keys(DB||{})){
+    if(SKIP[exId]||!Array.isArray(DB[exId]))continue;
+    for(const entry of DB[exId]){
+      if(!entry||!Array.isArray(entry.sets)||!entry.sets.length)continue;
+      const score=(entry.week||0)*1000+(entry.session||0);
+      const best=bestWeek*1000+bestSession;
+      if(score>best){
+        bestWeek=entry.week||0;
+        bestSession=entry.session||0;
+        bestDay=entry.day||null;
+      }
+    }
+  }
+  return bestWeek>0?{week:bestWeek,session:bestSession,dayId:bestDay}:null;
+}
+
 function getSugNext(){
+  // If no active session has ever been started, begin at Week 1 Session 1
   if(!S.active)return{week:1,session:1};
-  // If the active session has no logged sets, treat it as if it never
-  // happened — reuse the same week/session slot so ghost sessions
-  // (opened but abandoned) don't eat up session numbers.
-  if(Object.keys(S.setData||{}).length===0)return{week:S.week,session:S.session};
+
+  // If the current active session has no logged sets, it's a ghost.
+  // Derive the correct next slot from actual DB history so the user
+  // never needs to think about or manually correct session numbers.
+  if(Object.keys(S.setData||{}).length===0){
+    const last=getLastRealSession();
+    if(!last)return{week:1,session:1};
+    if(last.dayId==='rest')return{week:last.week+1,session:1};
+    return{week:last.week,session:last.session+1};
+  }
+
+  // Normal advance: the active session had real logged sets
   if(S.lastDayId==='rest')return{week:S.week+1,session:1};
   return{week:S.week,session:S.session+1};
 }
@@ -2688,6 +2731,7 @@ function openSessOverlay(){
   SESS={week:next.week,session:next.session,dayIdx:rec};
   document.getElementById('sess-warn').style.display=S.active?'block':'none';
   syncSessSheet();
+  showSessStep1(); // always start at step 1 (day/week picker)
   document.getElementById('sess-overlay').classList.remove('hidden');
 }
 function closeSessSheet(){
@@ -2726,20 +2770,43 @@ function syncSessSheet(){
   else rl.textContent=`Recommended next: ${DAYS[rec].isRest?'REST':DAYS[rec].label}`;
 
   document.getElementById('sess-day-picker').innerHTML=DAYS.map((d,i)=>`
-    <button class="dpbtn" onclick="SESS.dayIdx=${i};syncSessSheet()"
+    <button class="dpbtn" onclick="SESS.dayIdx=${i};syncSessSheet();showSessStep1()"
       style="background:${SESS.dayIdx===i?d.color:'#2a2a2a'};color:${SESS.dayIdx===i?'#000':'#888'}">
       ${d.isRest?'😴':d.label}
       ${i===rec&&SESS.dayIdx!==i?'<span class="rec-dot"></span>':''}
     </button>`).join('');
 
+  const dc = DAYS[SESS.dayIdx].color;
   const cb=document.getElementById('sess-confirm-btn');
-  cb.style.cssText=`width:100%;border-radius:14px;padding:16px;font-size:17px;font-weight:800;margin-top:14px;background:${DAYS[SESS.dayIdx].color};color:#000`;
+  if(cb) cb.style.cssText=`width:100%;border-radius:14px;padding:16px;font-size:17px;font-weight:800;margin-top:14px;background:${dc};color:#000`;
+  const sb=document.getElementById('sess-start-btn');
+  if(sb) sb.style.cssText=`width:100%;border-radius:14px;padding:16px;font-size:17px;font-weight:800;margin-top:0;background:${dc};color:#000`;
 }
 
 function adjSess(f,d){
   if(f==='week') SESS.week=Math.max(1,SESS.week+d);
   if(f==='sess') SESS.session=Math.max(1,SESS.session+d);
   syncSessSheet();
+}
+
+// Two-step session confirmation flow helpers
+function showSessStep1(){
+  const s1=document.getElementById('sess-step1');
+  const s2=document.getElementById('sess-step2');
+  if(s1)s1.style.display='block';
+  if(s2)s2.style.display='none';
+}
+function showSessStep2(){
+  const s1=document.getElementById('sess-step1');
+  const s2=document.getElementById('sess-step2');
+  if(s1)s1.style.display='none';
+  if(s2)s2.style.display='block';
+}
+function sessGoToCheckIn(){
+  // Don't start yet — show the coach check-in screen first so the
+  // user always sees the option to discuss injuries / focus before
+  // the session locks in.
+  showSessStep2();
 }
 
 function confirmSession(){
@@ -3720,13 +3787,16 @@ function closeCoachSheet(){
   document.getElementById('coach-overlay').classList.add('hidden');
   if(_preSessionMode){
     _preSessionMode = false;
-    // Re-open the session sheet, restoring the user's prior selections
+    // Re-open the session sheet, restoring the user's prior day/week/session
+    // selection and dropping them back at the check-in step (step 2) so
+    // they can immediately start or ask another question.
     if(_preSessionSess){
       SESS = {week:_preSessionSess.week, session:_preSessionSess.session, dayIdx:_preSessionSess.dayIdx};
       _preSessionSess = null;
     }
     document.getElementById('sess-warn').style.display = S.active ? 'block' : 'none';
     syncSessSheet();
+    showSessStep2(); // return to check-in step, not the day picker
     document.getElementById('sess-overlay').classList.remove('hidden');
   }
 }
