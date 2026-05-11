@@ -2056,7 +2056,9 @@ function getSelectedForCat(catId, day){
     // If the recommended is skipped, fall back to the next non-skipped exercise
     if(rotId.length) return rotId;
     const fallback = applySkip(cat.exercises.map(e=>e.id));
-    return fallback.slice(0, 1);
+    // If every exercise in the category is skipped, still show the rotation
+    // pick so the session card never silently drops a main lift entirely.
+    return fallback.length ? fallback.slice(0, 1) : [rotation.recommended];
   }
 
   // For non-main: prefer exercises the user has history with, but
@@ -2449,20 +2451,18 @@ function getLastRealSession(){
 }
 
 function getSugNext(){
-  // If no active session has ever been started, begin at Week 1 Session 1
-  if(!S.active)return{week:1,session:1};
-
-  // If the current active session has no logged sets, it's a ghost.
-  // Derive the correct next slot from actual DB history so the user
-  // never needs to think about or manually correct session numbers.
-  if(Object.keys(S.setData||{}).length===0){
+  // Use DB history when: (a) no session ever started, or (b) active but
+  // nothing logged (ghost session — opened without logging any sets).
+  // This means the counter is always grounded in actual training data and
+  // never drifts from test-opens or cache restores where active:false.
+  const hasLogged = S.active && Object.keys(S.setData||{}).length > 0;
+  if(!hasLogged){
     const last=getLastRealSession();
     if(!last)return{week:1,session:1};
     if(last.dayId==='rest')return{week:last.week+1,session:1};
     return{week:last.week,session:last.session+1};
   }
-
-  // Normal advance: the active session had real logged sets
+  // Normal advance from a real completed session
   if(S.lastDayId==='rest')return{week:S.week+1,session:1};
   return{week:S.week,session:S.session+1};
 }
@@ -2726,6 +2726,13 @@ function confirmSet(){
 // SESSION SHEET
 // ══════════════════════════════════════════════════════════════════════
 function openSessOverlay(){
+  // Clear any leftover session adjustments from the previous session NOW,
+  // before the new session setup begins. This is the correct lifecycle:
+  // adjustments set during pre-session coach chat survive into the started
+  // session; they are wiped only when the NEXT session sheet is opened.
+  if(!S.sessionAdjustments) S.sessionAdjustments={skipToday:[],selectToday:{}};
+  S.sessionAdjustments={skipToday:[],selectToday:{}};
+  save();
   const next=getSugNext();
   const rec=getRecDayIdx();
   SESS={week:next.week,session:next.session,dayIdx:rec};
@@ -2814,7 +2821,9 @@ function confirmSession(){
   S.week=SESS.week;S.session=SESS.session;S.dayIdx=SESS.dayIdx;
   S.active=true;S.sessionDate=fullDate();S.lastDayId=DAYS[SESS.dayIdx].id;
   S.setData={};S.expandedEx=null;S.selectedEx={};
-  S.sessionAdjustments={skipToday:[],selectToday:{}};
+  // Do NOT clear sessionAdjustments here — they were set during the
+  // pre-session coach flow and must remain active throughout this session.
+  // They are cleared in openSessOverlay() when the NEXT session is opened.
   window._currentSong=getRandomSong();
   cancelRestTimer();
   requestWakeLock();
@@ -3763,6 +3772,7 @@ function openCoachSheet(){
 // close the session sheet, open the coach with a contextual pre-fill,
 // and flag that we should re-open the session sheet on coach close.
 let _preSessionMode = false;
+let _preSessionSess = null;
 
 function openPreSessionCoach(){
   const day = DAYS[SESS.dayIdx];
@@ -3781,7 +3791,6 @@ function openPreSessionCoach(){
     input.focus();
   }
 }
-let _preSessionSess = null;
 
 function closeCoachSheet(){
   document.getElementById('coach-overlay').classList.add('hidden');
@@ -3884,7 +3893,9 @@ function buildCoachContext(){
         const equip = ex.equip ? ' (' + ex.equip + ')' : '';
         const boosted = isExBoosted(cat.id, ex.id) ? ' 🤖boosted' : '';
         const aiAdded = ex._aiAdded ? ' 🤖added' : '';
-        lines.push('    - ' + ex.id + ' = ' + ex.name + ' | ' + ex.sets + '×' + ex.rep + ' | start: ' + sw + equip + boosted + aiAdded);
+        const pm = getMeta(ex.id);
+        const pmStr = pm ? ' [' + pm.primary.join('+') + '|' + pm.mechanics.join(',') + ']' : '';
+        lines.push('    - ' + ex.id + ' = ' + ex.name + ' | ' + ex.sets + '×' + ex.rep + ' | start: ' + sw + equip + boosted + aiAdded + pmStr);
       }
     }
   }
@@ -4053,9 +4064,10 @@ function buildCoachContext(){
     for(const k of fbKeys){
       const f = fb[k] || {};
       const bits = [];
-      if(f.pump != null)  bits.push('pump ' + f.pump + '/5');
-      if(f.sore != null)  bits.push('soreness ' + f.sore + '/5');
-      if(f.notes)         bits.push('"' + String(f.notes).slice(0, 80) + '"');
+      if(f.pump   != null) bits.push('pump '    + f.pump   + '/5');
+      if(f.sore   != null) bits.push('soreness '+ f.sore   + '/5');
+      if(f.energy != null) bits.push('energy '  + f.energy + '/5');
+      if(f.notes)          bits.push('"' + String(f.notes).slice(0, 80) + '"');
       lines.push('- ' + k + ': ' + (bits.join(', ') || '(no detail)'));
     }
   }
@@ -4745,6 +4757,8 @@ function renderCoachThread(loadingMsg){
         '</div></div>';
     } else if(msg.proposalApplied){
       html += '<div class="coach-msg-row assistant"><div class="coach-loading" style="font-style:normal;color:#5ec46a;padding:6px 14px">✓ Applied</div></div>';
+    } else if(msg.proposalDismissed){
+      html += '<div class="coach-msg-row assistant"><div class="coach-loading" style="font-style:normal;color:rgba(255,255,255,.25);padding:6px 14px">✕ Skipped</div></div>';
     }
   }
   if(loadingMsg){
