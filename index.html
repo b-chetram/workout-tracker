@@ -917,9 +917,28 @@ document.addEventListener('visibilitychange', () => {
     if(typeof S !== 'undefined' && S && S.active && !_wakeLock){
       requestWakeLock();
     }
-    // Also give the rest timer a beat to update, since setInterval may
-    // have been throttled while backgrounded.
-    if(typeof renderRestBar === 'function') renderRestBar();
+    // Catch-up: iOS throttles setTimeout/setInterval while the app is
+    // backgrounded, so the rest timer's expiry callback may have been
+    // delayed. As soon as the screen comes back, if the timer already
+    // elapsed we fire the cues immediately (chime + haptic + notification)
+    // rather than waiting for the next polling tick.
+    if(typeof _restEndsAt !== 'undefined' && _restEndsAt > 0 && Date.now() >= _restEndsAt){
+      if(typeof fireRestComplete === 'function') fireRestComplete();
+    } else if(typeof renderRestBar === 'function'){
+      renderRestBar();
+    }
+  }
+});
+
+// iOS sometimes restores a frozen PWA page via a back/forward cache hit
+// rather than a true navigation, which doesn't re-fire visibilitychange.
+// pageshow with persisted=true covers that path so the timer catch-up
+// still runs when the user switches back from another app.
+window.addEventListener('pageshow', (ev) => {
+  if(typeof _restEndsAt !== 'undefined' && _restEndsAt > 0 && Date.now() >= _restEndsAt){
+    if(typeof fireRestComplete === 'function') fireRestComplete();
+  } else if(ev.persisted && typeof renderRestBar === 'function'){
+    renderRestBar();
   }
 });
 
@@ -1416,16 +1435,19 @@ function stopPreview(){
   window._previewPlaying = false;
 }
 
-// Pause / resume the current preview without re-shuffling. Disabled
-// (button shows but does nothing) until the user has shuffled at
-// least once, since there's no audio to control yet.
+// Pause / resume the current preview without re-shuffling.
 function togglePreviewPlayback(e){
   if(e){ e.preventDefault(); e.stopPropagation(); }
   if(!_previewAudio) return;
-  // Only act when a real preview track is loaded — the silent
-  // placeholder src has a near-zero duration, real Deezer clips ~30s.
-  const dur = _previewAudio.duration;
-  if(!isFinite(dur) || dur < 1) return;
+  // If audio is already playing, ALWAYS allow pause — no duration check
+  // needed (iOS sometimes reports NaN/Infinity for duration on streaming
+  // sources even while they're actively playing).
+  // Only block the ▶ resume path when the element is still on the silent
+  // placeholder (duration ~0) so we don't prematurely trigger a play().
+  if(_previewAudio.paused){
+    const dur = _previewAudio.duration;
+    if(!isFinite(dur) || dur < 1) return; // nothing real loaded yet
+  }
   buzz(HAPTIC_SET);
   // Audio 'play'/'pause' event listeners drive _previewPlaying + render.
   if(_previewAudio.paused){
@@ -1440,6 +1462,13 @@ async function shuffleAndPreviewSong(e){
   if(e){ e.preventDefault(); e.stopPropagation(); }
   buzz(HAPTIC_SET);
 
+  // Remember whether the in-app preview was already running BEFORE we
+  // shuffle. If it was, we'll auto-play the new track so the experience
+  // is seamless. If it wasn't (user is listening to Apple Music,
+  // SoundCloud, etc.) we silently load the track without starting
+  // playback — external audio is never interrupted.
+  const wasPlaying = !!window._previewPlaying;
+
   // Pick a new song different from the current one
   let next;
   if(SONGS.length > 1){
@@ -1449,7 +1478,7 @@ async function shuffleAndPreviewSong(e){
   }
   window._currentSong = next;
   stopPreview();
-  render(); // shows the new song
+  render(); // shows the new song title immediately
 
   // Sequence guard: if the user taps shuffle multiple times in quick
   // succession, the LATEST call wins. Stale fetches that resolve
@@ -1457,12 +1486,14 @@ async function shuffleAndPreviewSong(e){
   // song instead of being driven by whichever request finished last.
   const mySeq = ++_shuffleSeq;
 
-  // Synchronous iOS unlock attempt INSIDE the user gesture. Plays
-  // the silent placeholder src so the audio session is "warm" before
-  // the async fetch consumes the gesture token. After this, the
-  // post-fetch audio.play() works reliably on iOS Safari/PWA.
+  // Synchronous iOS unlock attempt INSIDE the user gesture. Plays the
+  // silent placeholder so the audio session is "warm" before the async
+  // fetch consumes the gesture token. After this, a post-fetch play()
+  // works reliably on iOS Safari/PWA. We only do this when we know
+  // we're going to auto-play (wasPlaying) to avoid stealing audio focus
+  // from an external player when we won't actually play anything.
   const audio = getPreviewAudio();
-  if(!_previewUnlocked){
+  if(wasPlaying && !_previewUnlocked){
     try {
       audio.muted = true;
       const unlock = audio.play();
@@ -1476,14 +1507,19 @@ async function shuffleAndPreviewSong(e){
     } catch(_){ try{audio.muted=false;}catch(__){} }
   }
 
-  // Fetch preview URL and play.
+  // Fetch preview URL.
   const data = await fetchSongData(next.n, next.a);
   if(mySeq !== _shuffleSeq) return; // a newer tap superseded us
   if(data && data.preview){
     try {
       audio.src = data.preview;
-      const p = audio.play();
-      if(p && p.catch) p.catch(() => { /* play listener will reset state */ });
+      if(wasPlaying){
+        // Resume auto-play — user was already using in-app preview.
+        const p = audio.play();
+        if(p && p.catch) p.catch(() => { /* play listener will reset state */ });
+      }
+      // else: track is loaded and ready; user taps ▶ to preview it.
+      // External music (Apple Music, SoundCloud) keeps playing.
     } catch(_){}
   }
 }
@@ -2970,9 +3006,12 @@ function render(){
   if(!window._currentSong) window._currentSong=getRandomSong();
   const song=window._currentSong;
   const playing = !!window._previewPlaying;
-  // Pause button only meaningful once a real preview track is loaded
-  // (the silent placeholder used for iOS unlock has near-zero duration).
-  const hasAudio = !!(_previewAudio && isFinite(_previewAudio.duration) && _previewAudio.duration > 1);
+  // Enable the pause/play button when:
+  //   a) audio is actively playing right now (always allow pause), OR
+  //   b) a real track has been loaded with a known duration > 1s.
+  // iOS sometimes reports NaN/Infinity for duration on streaming sources
+  // even while they play, so `playing` is the authoritative signal.
+  const hasAudio = playing || !!(_previewAudio && isFinite(_previewAudio.duration) && _previewAudio.duration > 1);
   document.getElementById('mini-player').innerHTML=`
     <div class="mini-p">
       <button class="mp-main ${playing?'playing':''}" onclick="shuffleAndPreviewSong(event)" title="Tap to shuffle + preview">
