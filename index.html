@@ -251,9 +251,7 @@ input[type=number]::-webkit-inner-spin-button{-webkit-appearance:none}
 .coach-prefs-active{padding:10px 14px;background:rgba(232,168,56,.08);border:1px solid rgba(232,168,56,.3);border-radius:12px;margin:14px 0;display:flex;align-items:center;gap:10px;font-size:13px}
 .coach-prefs-active .summary{flex:1;color:rgba(255,255,255,.85)}
 .coach-prefs-revert{background:rgba(255,255,255,.06);border:1px solid rgba(255,255,255,.1);color:rgba(255,255,255,.85);border-radius:14px;padding:6px 12px;font-size:11px;font-weight:600;cursor:pointer}
-/* Per-exercise AI ask — opt-in token use */
-.ex-ai-btn{flex-shrink:0;background:rgba(232,168,56,.12);border:1px solid rgba(232,168,56,.3);color:#e8a838;border-radius:14px;padding:4px 10px;font-size:10px;font-weight:700;cursor:pointer;-webkit-tap-highlight-color:transparent;letter-spacing:.3px;line-height:1}
-.ex-ai-btn:active{background:rgba(232,168,56,.25)}
+
 </style>
 </head>
 <body>
@@ -2952,7 +2950,7 @@ function render(){
           <div class="wbox" style="${(sug.go||isDeloadNow)?`border-color:${day.color}50;background:${day.color}10`:''}">
             <div class="wlbl" style="color:${(sug.go||isDeloadNow)?day.color:'#444'}">${targetLbl}</div>
             <div class="wval" style="color:${targetColor}">${targetTxt}</div>
-            ${targetSub?`<div class="wval2" style="display:flex;align-items:center;gap:8px"><span style="flex:1;min-width:0">${targetSub}</span><button class="ex-ai-btn" onclick="askCoachAboutExercise('${ex.id}')" title="Sanity-check this with AI">🤖 ask</button></div>`:''}
+            ${targetSub?`<div class="wval2">${targetSub}</div>`:''}
           </div>
         </div>
         ${altName?`<div class="alt-bar">
@@ -3609,10 +3607,12 @@ function buildCoachContext(){
     }
   }
 
-  // 4. HISTORY -----------------------------------------------------
-  const SYSTEM_KEYS = { skipped:1, feedback:1, deloadWeeks:1 };
+  // 4. HISTORY + PROGRESSION ANALYSIS --------------------------------
+  const SYSTEM_KEYS = { skipped:1, feedback:1, deloadWeeks:1, notes:1 };
   const exIds = Object.keys(DB || {}).filter(k => !SYSTEM_KEYS[k] && Array.isArray(DB[k]));
-  lines.push('\n=== HISTORY (last 5 sessions per exercise — weight×reps@RIR) ===');
+
+  // Build per-exercise trend analysis for the coach
+  lines.push('\n=== EXERCISE HISTORY & PROGRESSION ANALYSIS ===');
   if(exIds.length === 0){
     lines.push('(no logged exercise history yet)');
   } else {
@@ -3621,19 +3621,78 @@ function buildCoachContext(){
       const ex = findEx(exId);
       const exName = ex ? ex.name : exId;
       const unit = ex ? (ex.unit || '') : '';
-      const recent = DB[exId].slice(-5);
-      if(recent.length === 0) continue;
-      const summaries = recent.map(e => {
-        const sets = ((e && e.sets) || []).filter(s => s).map(s => {
+      const top = ex ? topRep(ex) : null;
+      const bot = ex ? botRep(ex) : null;
+      const allSess = (DB[exId] || []).filter(e => e && e.sets && e.sets.length > 0);
+      if(allSess.length === 0) continue;
+
+      // Last 5 sessions for display
+      const recent = allSess.slice(-5);
+      const histStr = recent.map(e => {
+        const sets = (e.sets || []).filter(s => s).map(s => {
           const r = (s.rir == null || s.rir === '') ? '?' : s.rir;
-          return s.weight + (unit ? unit : '') + '×' + s.reps + '@RIR' + r;
+          return s.weight + '×' + (s.reps ?? '?') + '@RIR' + r;
         }).join(', ');
-        return 'wk' + (e && e.week) + 's' + (e && e.session) + ': ' + sets;
+        return 'wk' + e.week + 's' + e.session + '(' + (e.date||'?') + '): ' + sets;
       }).join(' | ');
-      lines.push('- ' + exName + ': ' + summaries);
+
+      // Progression status — analyse last 3 non-deload sessions
+      const ndSess = allSess.filter(e => !(DB.deloadWeeks||[]).includes(e.week));
+      const last3 = ndSess.slice(-3);
+      let status = '';
+      if(last3.length >= 2 && ex){
+        const getMinReps = sess => {
+          const reps = (sess.sets||[]).filter(s=>s&&s.reps!=null).map(s=>s.reps);
+          return reps.length ? Math.min(...reps) : null;
+        };
+        const getAvgW = sess => {
+          const ws = (sess.sets||[]).filter(s=>s&&s.weight).map(s=>s.weight);
+          return ws.length ? ws.reduce((a,b)=>a+b,0)/ws.length : null;
+        };
+        const minReps = last3.map(getMinReps).filter(r=>r!=null);
+        const weights = last3.map(getAvgW).filter(w=>w!=null);
+        const latestW = weights[weights.length-1];
+        const latestMin = minReps[minReps.length-1];
+        const prevMin = minReps.length>=2 ? minReps[minReps.length-2] : null;
+
+        // Stagnation: same weight 2+ sessions, not hitting top rep on all sets
+        const sameWeight = weights.length>=2 && weights.every(w=>Math.abs(w-latestW)<2);
+        const atTop = latestMin != null && top != null && latestMin >= top;
+        const improving = prevMin != null && latestMin != null && latestMin > prevMin;
+        const declining = prevMin != null && latestMin != null && latestMin < prevMin - 1;
+
+        // Fatigue: big drop set1→set3
+        const latestSess = last3[last3.length-1];
+        const setReps = (latestSess.sets||[]).filter(s=>s&&s.reps!=null).map(s=>s.reps);
+        const fatigueFlag = setReps.length >= 2 && (setReps[0] - setReps[setReps.length-1]) >= 3;
+
+        if(declining && sameWeight && last3.length>=2){
+          status = ' ⚠️ DECLINING: min reps dropping across sessions at same weight — likely overreaching or too heavy';
+        } else if(sameWeight && !atTop && !improving){
+          status = ' 🔶 STAGNANT: ' + last3.length + ' sessions at same weight without hitting top of range (' + (top||'?') + ')';
+        } else if(atTop){
+          status = ' ✅ READY TO PROGRESS: hitting top of range';
+        } else if(improving){
+          status = ' 📈 PROGRESSING: min reps improving session to session';
+        }
+        if(fatigueFlag) status += ' | HIGH INTRA-SESSION FATIGUE (set 1 vs last set: ' + setReps[0] + '→' + setReps[setReps.length-1] + ')';
+      }
+
+      const sug = ex ? getSug(ex) : null;
+      const sugStr = sug ? ' | alg.suggests: ' + sug.val + (unit?' '+unit:'') + (sug.go?' 📈':'') + (sug.micro?' (micro)':'') : '';
+      lines.push('- ' + exName + (unit?' ('+unit+')':'') + (top?(' '+bot+'-'+top+' rep range'):'') + status + sugStr);
+      lines.push('  ' + histStr);
       logged++;
     }
     if(logged === 0) lines.push('(no logged sets yet)');
+  }
+
+  // 4b. SESSION NOTES -----------------------------------------------
+  if(DB && DB.notes && Object.keys(DB.notes).length){
+    lines.push('\n=== SESSION NOTES ===');
+    for(const [k, note] of Object.entries(DB.notes)){
+      lines.push('- ' + k + ': ' + String(note).slice(0, 120));
+    }
   }
 
   // 5. RECENT FEEDBACK / SKIPS ------------------------------------
@@ -4172,52 +4231,73 @@ async function askCoach(question){
     // Rebuild the context fresh every turn — the user may have logged
     // a set during the chat, and we want the coach to see it.
     const systemContent =
-      'You are a strength training coach for a hypertrophy-focused lifter ' +
-      'using a workout tracker app. Use the user\'s actual training data ' +
-      '(below) to give specific, actionable advice — concrete weights, rep ' +
-      'targets, exercise swaps using exercise IDs from the catalog. Keep ' +
-      'answers under 220 words. Be direct: short justification, then the ' +
-      'recommendation. No fluff, no disclaimers. Remember the conversation ' +
-      'so far and build on previous answers when the user follows up.\n\n' +
-      'WHEN THE USER ASKS TO CHANGE THEIR PLAN — e.g. "focus more on arms", ' +
-      '"add bicep work", "drop chest accessory", "swap pulldowns for rows", ' +
-      '"add a quad-specific exercise", "add more melodic songs", "expand the ' +
-      'workout playlist" — give a brief justification AND append a JSON ' +
-      'proposal at the end of your response wrapped in <changes> tags. ' +
-      'Schema:\n' +
+      'You are Coach — a personal strength and hypertrophy trainer whose methodology ' +
+      'is fully aligned with Jeff Nippard\'s evidence-based bodybuilding principles. ' +
+      'You have full access to the athlete\'s program, training history, progression ' +
+      'data, and session notes shown below. You are the only coaching resource — ' +
+      'no other AI tools exist in this app — so be thorough and specific.\n\n' +
+
+      '━━ NIPPARD PRINCIPLES YOU APPLY ━━\n' +
+      '1. DOUBLE PROGRESSION: Athlete works within a rep range (e.g. 10-15). Once they ' +
+      'complete ALL sets at the TOP of that range cleanly (RIR ≥ 1), increase weight by ' +
+      'the smallest increment available. Never suggest a weight jump without evidence they ' +
+      'have earned it.\n' +
+      '2. STAGNATION PROTOCOL: If an athlete has been at the same weight for 3+ sessions ' +
+      'without consistently completing all sets at or near the top of the range, that is ' +
+      'stagnation — not just "needs more sessions". Your response should be a concrete fix: ' +
+      '(a) slight weight drop 10-15% to reset technique and build back, (b) rep range ' +
+      'adjustment, or (c) exercise swap. Do NOT say "keep grinding".\n' +
+      '3. INTRA-SESSION FATIGUE: A drop of 3+ reps from set 1 to the last set at the same ' +
+      'weight signals excessive fatigue accumulation. This means rest periods are too short, ' +
+      'volume is too high, or the weight is too heavy relative to current capacity.\n' +
+      '4. RIR AUTOREGULATION: RIR 0 every set = dangerously close to overreaching. RIR 2-3 ' +
+      'is the hypertrophy sweet spot. RIR 4+ = too light, add weight now.\n' +
+      '5. EXERCISE SELECTION: Prefer exercises with strong resistance curves, long muscle ' +
+      'lengths under load, and movements the athlete executes well. Rotation every 4-8 weeks ' +
+      'prevents adaptation plateaus.\n' +
+      '6. DELOAD: Recommend a deload every 8-12 sessions or when performance declines ' +
+      '2 consecutive sessions. Deload = 40% weight reduction, moderate reps, focus on form.\n' +
+      '7. COMPOUND FIRST: Always schedule compound/main lifts before accessory isolation work.\n\n' +
+
+      '━━ WHAT YOU CAN DO ━━\n' +
+      '• Answer any question about an exercise, the program, or the athlete\'s history\n' +
+      '• Analyse progression trends, identify stagnation/plateau with specific data\n' +
+      '• Add new exercises to the athlete\'s program catalog (via <changes> proposal)\n' +
+      '• Boost or adjust selection limits for categories\n' +
+      '• Recommend rep/weight targets with clear rationale from the logged data\n' +
+      '• Suggest music additions to the playlist\n\n' +
+
+      '━━ RESPONSE STYLE ━━\n' +
+      'Direct and data-driven. Lead with the key finding, then the recommendation. ' +
+      'Always cite specific numbers from their history (e.g. "your last 3 sessions at ' +
+      '110lb showed 10/10/7 — the set 3 drop is a fatigue flag"). Under 280 words unless ' +
+      'a detailed breakdown is explicitly requested. No generic disclaimers. No fluff.\n\n' +
+
+      '━━ WHEN TO APPEND A <changes> BLOCK ━━\n' +
+      'Append ONLY when: (1) user asks to add/swap an exercise, (2) user asks to adjust ' +
+      'category limits, (3) user asks to add songs. For analysis, advice, or questions — ' +
+      'text only, no block.\n\n' +
+      'Schema (all top-level keys optional — include only what changes):\n' +
       '<changes>\n' +
       '{\n' +
-      '  "summary": "<one-sentence description of changes>",\n' +
-      '  "categories": {\n' +
-      '    "<category_id>": { "min": <int?>, "max": <int?>, "boost": [<exercise_ids>] }\n' +
-      '  },\n' +
+      '  "summary": "<one sentence>",\n' +
+      '  "categories": { "<cat_id>": { "min": <int?>, "max": <int?>, "boost": ["<ex_id>"] } },\n' +
       '  "add_exercises": {\n' +
-      '    "<category_id>": [\n' +
-      '      { "id": "<short_snake_case_id>", "name": "<display name>", "sets": <int>,\n' +
-      '        "rep": "<rep range like 8 to 12>", "sw": <starting weight number>, \n' +
-      '        "unit": "<lb|lb DB|lb cable|BW|kg>", "equip": "<barbell|dumbbell|cable|machine|bodyweight>" }\n' +
-      '    ]\n' +
+      '    "<cat_id>": [{ "id": "<snake_id>", "name": "<name>", "sets": <int>,\n' +
+      '      "rep": "<e.g. 6 to 10>", "sw": <number>, "unit": "<lb|lb DB|lb cable|BW|kg>",\n' +
+      '      "equip": "<barbell|dumbbell|cable|machine|bodyweight>" }]\n' +
       '  },\n' +
-      '  "add_songs": [\n' +
-      '    { "name": "<track title>", "artist": "<artist>" }\n' +
-      '  ]\n' +
+      '  "add_songs": [{ "name": "<title>", "artist": "<artist>" }]\n' +
       '}\n' +
       '</changes>\n' +
-      'Use category IDs and exercise IDs EXACTLY as they appear in PROGRAM. ' +
-      'Only include fields you want to change. All three top-level keys ' +
-      '(categories, add_exercises, add_songs) are optional — include only what you need. ' +
-      'Boost = exercises to highlight and prefer in selection. ' +
-      'add_exercises = NEW exercises to add to the catalog (use this for ' +
-      'requests like "add quad-specific exercises" — propose real, safe, ' +
-      'gym-standard movements with conservative starting weights). ' +
-      'add_songs = NEW gym tracks for the music shuffle pool (use this when ' +
-      'the user describes a vibe like "more melodic", "less dubstep", "more ' +
-      'hype", "extend the playlist"). Pick mainstream tracks Deezer indexes ' +
-      '(electronic / house / EDM / hip-hop). Limit 8 per proposal. Avoid ' +
-      'tracks already in MUSIC CATALOG below. ' +
-      'Change at most 3 categories per proposal. For pure questions (no plan ' +
-      'change requested), respond normally with no <changes> block.\n\n' +
-      'CURRENT TRAINING DATA:\n' + buildCoachContext();
+      'Use category IDs and exercise IDs EXACTLY as listed in PROGRAM below. ' +
+      'add_exercises = adds the exercise as a selectable option in that category (athlete ' +
+      'still picks it each session — it does not auto-schedule). Starting weight (sw) should ' +
+      'be conservative but realistic based on the athlete\'s existing lifts. ' +
+      'add_songs: pick mainstream tracks Deezer indexes (EDM/hip-hop/electronic). Max 8. ' +
+      'Avoid duplicates already in MUSIC CATALOG.\n\n' +
+
+      '━━ CURRENT TRAINING DATA ━━\n' + buildCoachContext();
 
     // Strip our internal fields (proposal, proposalApplied, etc.) before
     // sending — the OpenAI-compatible API rejects unknown message keys.
@@ -4234,8 +4314,8 @@ async function askCoach(question){
       body: JSON.stringify({
         model: COACH_MODEL,
         messages: messages,
-        temperature: 0.6,
-        max_tokens: 600
+        temperature: 0.55,
+        max_tokens: 750
       })
     });
 
@@ -4296,156 +4376,12 @@ function askCoachCustom(){
   askCoach(v);
 }
 
-// Opt-in per-exercise AI assist. Fires ONE focused Groq call about
-// a specific lift instead of running the model on every render.
-// Reuses the existing coach sheet (system prompt + full context already
-// built per turn), so no new token plumbing — just opens the sheet
-// with a pre-loaded question and lets the user see the answer in
-// the running thread.
-function askCoachAboutExercise(exId){
-  const ex = findEx(exId);
-  if(!ex) return;
-  buzz(HAPTIC_SET);
-  openCoachSheet();
-  const last = (typeof getLastSess === 'function') ? getLastSess(exId) : null;
-  const lastSummary = last ? getLastSessSummary(last, ex) : 'no history yet';
-  const sug = getSug(ex);
-  const q = 'Quick sanity check on ' + ex.name + ' (target rep range ' + ex.rep + '): ' +
-            'last session was ' + lastSummary + '. ' +
-            'The deterministic algorithm suggests: ' + sug.txt + ' — ' + (sug.reason || '') + ' ' +
-            'Do you agree, or would you adjust the weight / reps for today? Be concise.';
-  askCoach(q);
-}
-
 // Enter sends; Shift+Enter inserts a newline.
 function coachInputKey(e){
   if(e.key === 'Enter' && !e.shiftKey && !e.metaKey && !e.ctrlKey){
     e.preventDefault();
     askCoachCustom();
   }
-}
-
-// ══════════════════════════════════════════════════════════════════════
-// DAILY COACH BRIEF
-// Fires once per weekday morning (Mon–Fri) after 8 AM. Clears the
-// previous chat, then sends a Groq call about the NEXT workout using
-// logged history + Jeff Nippard hypertrophy principles.
-// ══════════════════════════════════════════════════════════════════════
-const DAILY_BRIEF_LS = 'wt_daily_brief_date';
-
-function _buildDailyBriefContext(){
-  // Determine next workout day
-  const nextDayIdx = getRecDayIdx();
-  const nextDay = DAYS[nextDayIdx];
-  if(!nextDay || nextDay.isRest) return null;
-
-  const lines = [];
-  const nextWk = getSugNext();
-  lines.push('NEXT SESSION: ' + (nextDay.label || nextDay.id) + ' — Week ' + nextWk.week + ', Session ' + nextWk.session);
-
-  // Per-exercise suggestion + recent history
-  const exercises = getActiveExercises(nextDay);
-  for(const ex of exercises){
-    const sug = getSug(ex);
-    const hist = getNonDeloadSessions(ex.id);
-    const last = hist.length ? hist[hist.length - 1] : null;
-    let line = ex.name + ' (' + ex.rep + ' reps): suggest ' + sug.val + ' ' + ex.unit;
-    if(sug.go) line += ' 📈 increase';
-    if(sug.micro) line += ' — micro-progress targets: ' + (sug.targetReps || []).join('/');
-    if(last && last.sets){
-      const setStr = last.sets.filter(Boolean).map(s => s.weight + '×' + (s.reps||'?')).join(', ');
-      line += ' | last: ' + setStr;
-    }
-    lines.push('  ' + line);
-  }
-
-  // Deload status
-  if(S.deloadActive) lines.push('NOTE: Deload week active — weights at ~60%.');
-  const allHist = exercises.flatMap(ex => getNonDeloadSessions(ex.id));
-  if(allHist.length >= 12 && !S.deloadActive) lines.push('NOTE: ~' + allHist.length + ' sessions logged. Consider whether a deload is approaching.');
-
-  return lines.join('\n');
-}
-
-async function fireDailyBrief(){
-  const key = getCoachKey();
-  if(!key) return; // no key — skip silently
-
-  const ctx = _buildDailyBriefContext();
-  if(!ctx) return; // rest day — skip
-
-  // Clear old history and start fresh
-  _coachHistory = [];
-  saveCoachHistory();
-  renderCoachThread('Coach is preparing your morning brief…');
-  // Make the coach panel visible if the sheet is open
-  const wrap = document.getElementById('coach-thread-wrap');
-  if(wrap) wrap.style.display = 'block';
-
-  const systemContent =
-    'You are a hypertrophy-focused strength coach. Every weekday morning you ' +
-    'send the user a concise, data-driven briefing about their upcoming workout. ' +
-    'Base your advice strictly on Jeff Nippard\'s evidence-based hypertrophy principles: ' +
-    'double progression (add reps within range, then bump weight), RIR-based autoregulation, ' +
-    'compound-first exercise order, adequate volume per muscle group, and planned deload weeks ' +
-    'every 8-12 sessions. Be direct and specific — reference actual weights and rep targets ' +
-    'from the data below. Keep the brief under 200 words. Format: ' +
-    '1) A one-line greeting naming the day type. ' +
-    '2) 2-3 bullet highlights: what to push, what to be cautious about, any progression milestone. ' +
-    '3) One concise Nippard principle reminder relevant to this session. ' +
-    'No fluff, no disclaimers. Do NOT propose <changes> blocks — this is a read-only morning brief.\n\n' +
-    'TRAINING DATA:\n' + buildCoachContext() + '\n\n' + ctx;
-
-  try {
-    const resp = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + key },
-      body: JSON.stringify({
-        model: COACH_MODEL,
-        messages: [{ role: 'system', content: systemContent },
-                   { role: 'user', content: 'Good morning. Give me my daily training brief.' }],
-        temperature: 0.55,
-        max_tokens: 320
-      })
-    });
-
-    if(!resp.ok){
-      renderCoachThread();
-      return;
-    }
-    const data = await resp.json();
-    const text = (((data || {}).choices || [])[0] || {}).message
-                  ? (data.choices[0].message.content || '').trim() : '';
-    if(!text){ renderCoachThread(); return; }
-
-    // Store as assistant message (no proposal — briefs are read-only)
-    _coachHistory.push({ role: 'assistant', content: text, t: Date.now(), isDailyBrief: true });
-    saveCoachHistory();
-    // Mark today as briefed so we don't fire again
-    try { localStorage.setItem(DAILY_BRIEF_LS, new Date().toDateString()); } catch(e){}
-    renderCoachThread();
-  } catch(e){
-    renderCoachThread();
-  }
-}
-
-function checkDailyBrief(){
-  // Only fire on weekdays (Mon=1 … Fri=5)
-  const now = new Date();
-  const day = now.getDay(); // 0=Sun, 6=Sat
-  if(day === 0 || day === 6) return;
-
-  // Only after 8:00 AM
-  if(now.getHours() < 8) return;
-
-  // Only once per calendar day
-  try {
-    const last = localStorage.getItem(DAILY_BRIEF_LS);
-    if(last === now.toDateString()) return;
-  } catch(e){}
-
-  // Fire asynchronously so it doesn't block the initial render
-  setTimeout(fireDailyBrief, 1200);
 }
 
 // ══════════════════════════════════════════════════════════════════════
@@ -4464,8 +4400,6 @@ render();
 // will catch it on the next foreground transition, and confirmSession
 // will catch it on the next session start — either way we converge.
 if(S.active) requestWakeLock();
-// Daily morning brief — fires once per weekday after 8 AM.
-checkDailyBrief();
 </script>
 </body>
 </html>
