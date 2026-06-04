@@ -632,7 +632,7 @@ const EXERCISE_DB = {
     label:'PUSH', sub:'Chest · Shoulders · Triceps', color:'#e8a838',
     categories: [
       { id:'push_main', name:'Main Press', min:1, max:1, isMain:true, exercises:[
-        {id:'ohp',       name:'Overhead Press',              sets:3, rep:'5 to 8',  sw:115, unit:'lb',      equip:'barbell', alt:['Barbell OHP','Dumbbell OHP'], prog:'Leave 1 to 2 RIR on sets 1 to 2, push last set to failure. Hit top of range 2 sessions → add 5 lb.'},
+        {id:'ohp',       name:'Overhead Press',              sets:3, rep:'6 to 10', sw:115, unit:'lb',      equip:'barbell', alt:['Barbell OHP','Dumbbell OHP'], prog:'Leave 1 to 2 RIR on sets 1 to 2, push last set to failure. Hit top of range 2 sessions → add 5 lb.'},
         {id:'db_bench',  name:'Dumbbell Bench Press',        sets:3, rep:'8 to 12', sw:60,  unit:'lb DB',   equip:'dumbbell', alt:['Flat DB Bench','Incline DB Bench'], prog:'Leave 1 to 2 RIR on sets 1 to 2, push last set to failure. Hit top of range 2 sessions → add 5 lb.'},
       ]},
       { id:'push_chest', name:'Chest Accessory', min:1, max:2, exercises:[
@@ -669,7 +669,7 @@ const EXERCISE_DB = {
       ]},
       { id:'pull_horiz', name:'Horizontal Pull', min:1, max:1, isMain:true, exercises:[
         {id:'bar_row',   name:'Barbell Row',                sets:3, rep:'8 to 12', sw:155, unit:'lb',      equip:'barbell', prog:'Leave 1 to 2 RIR on sets 1 to 2, push last set to failure. Hit top of range 2 sessions → add 10 lb.'},
-        {id:'pendlay',   name:'Pendlay Row',                sets:3, rep:'5 to 8',  sw:155, unit:'lb',      equip:'barbell', prog:'Leave 1 to 2 RIR on sets 1 to 2, push last set to failure. Hit top of range 2 sessions → add 10 lb.'},
+        {id:'pendlay',   name:'Pendlay Row',                sets:3, rep:'6 to 10', sw:155, unit:'lb',      equip:'barbell', prog:'Leave 1 to 2 RIR on sets 1 to 2, push last set to failure. Hit top of range 2 sessions → add 10 lb.'},
         {id:'cable_row', name:'Seated Cable Row',           sets:3, rep:'10 to 12',sw:150, unit:'lb cable',equip:'cable', prog:'Leave 1 to 2 RIR on sets 1 to 2, push last set to failure. Hit top of range 2 sessions → add 10 lb.'},
         {id:'db_row',    name:'Dumbbell Row (Single Arm)',   sets:3, rep:'8 to 12', sw:70,  unit:'lb DB',   equip:'dumbbell', prog:'Hit 3×12 → add 5 lb. Full stretch at bottom, pull to hip.'},
       ]},
@@ -693,7 +693,7 @@ const EXERCISE_DB = {
     categories: [
       { id:'legs_quad', name:'Quad Dominant (Main)', min:1, max:1, isMain:true, exercises:[
         {id:'hack_sq',   name:'Hack Squat',                sets:3, rep:'8 to 10', sw:120, unit:'lb',      equip:'machine', prog:'Leave 1 to 2 RIR on sets 1 to 2, push last set to failure. Hit top of range 2 sessions → add 10 lb.'},
-        {id:'bb_squat',  name:'Front Squat',                sets:3, rep:'5 to 8',  sw:165, unit:'lb',      equip:'barbell', prog:'Leave 1 to 2 RIR on sets 1 to 2, push last set to failure. Hit top of range 2 sessions → add 10 lb. Upright torso, elbows high.'},
+        {id:'bb_squat',  name:'Front Squat',                sets:3, rep:'6 to 10', sw:165, unit:'lb',      equip:'barbell', prog:'Leave 1 to 2 RIR on sets 1 to 2, push last set to failure. Hit top of range 2 sessions → add 10 lb. Upright torso, elbows high.'},
         {id:'goblet_sq', name:'Goblet Squat',               sets:3, rep:'10 to 12',sw:60,  unit:'lb DB',   equip:'dumbbell', prog:'Hit 3×12 → add 5 lb. Great for form work and depth.'},
         {id:'leg_press', name:'Leg Press',                  sets:3, rep:'10 to 12',sw:360, unit:'lb',      equip:'machine', prog:'Hit 3×12 → add 20 lb. Full ROM, do not lock knees.'},
       ]},
@@ -936,6 +936,53 @@ const EX_LOAD = {
 };
 function getLoad(exId){ return EX_LOAD[exId] || {axial:0, pattern:null, sfr:'med'}; }
 const SFR_RANK = {high:2, med:1, low:0};
+
+// ── SMART REST (rest scaled to the lift, not one global number) ──
+// Heavy barbell compounds need full recovery or reps crater on later
+// sets; isolations recover fast. King/Nippard both program rest by lift.
+function getRestForEx(exId){
+  const meta=getMeta(exId)||{}; const mech=meta.mechanics||[];
+  const load=getLoad(exId);
+  if(load.axial>=2)               return 180; // heavy barbell squat/hinge/row/press
+  if(mech.includes('compound'))   return 120; // machine / DB compound
+  if(mech.length)                 return 75;  // isolation
+  return 90;                                   // unknown → old default
+}
+function restTierLabel(exId){
+  const meta=getMeta(exId)||{}; const mech=meta.mechanics||[];
+  const load=getLoad(exId);
+  if(load.axial>=2)             return 'heavy compound';
+  if(mech.includes('compound')) return 'compound';
+  if(mech.length)               return 'isolation';
+  return '';
+}
+
+// ── EXECUTION STANDARD (King-style tempo + stretch + lengthened partials) ──
+// Standardises rep QUALITY so logged reps are comparable session-to-session
+// and the growth-driving stretched position is loaded every rep.
+const _STRETCH_FOCUS = {
+  rdl:1, sldl:1, bb_squat:1, goblet_sq:1, bss:1, lunges:1,
+  leg_curl:1, db_leg_curl:1, leg_ext:1,
+  inc_curl:1, spider_curl:1, preacher:1,
+  db_fly:1, cable_fly:1, dips:1, dips_bw:1, tri_oh:1, skull:1,
+  laterals:1, lat_cable:1, sa_pull:1, db_row:1, lat_pull:1
+};
+function getExecCue(ex){
+  const meta=getMeta(ex.id)||{}; const mech=meta.mechanics||[];
+  const load=getLoad(ex.id);
+  const isIso = mech.includes('isolation');
+  let tempo;
+  if(load.axial>=2)      tempo='2 to 3 sec down, controlled, then drive up';
+  else if(isIso)         tempo='3 sec down, 1 sec squeeze at the hard part';
+  else                   tempo='2 to 3 sec down, no bounce out of the bottom';
+  const stretch = _STRETCH_FOCUS[ex.id]
+    ? 'Pause and feel the stretch at the bottom — that’s where growth happens.'
+    : 'Full range every rep, control the negative.';
+  const partial = isIso
+    ? ' Out of full reps? Add 2 to 3 partials in the stretched position.'
+    : '';
+  return { tempo, stretch, partial };
+}
 
 // ══════════════════════════════════════════════════════════════════════
 // ENHANCEMENTS: haptics, audio cue, rest timer, sparklines,
@@ -1210,6 +1257,7 @@ let _restExpireTimeout = null;
 let _restEndsAt        = 0;
 let _restTotalMs       = 0;
 let _restFired         = false;
+let _restLabel         = '';   // e.g. "heavy compound" — shown in the rest bar
 
 function getRestSec(){
   let n = NaN;
@@ -1220,8 +1268,9 @@ function setRestSec(s){
   try { localStorage.setItem(REST_KEY, String(s)); } catch(e){}
 }
 
-function startRestTimer(seconds){
+function startRestTimer(seconds, label){
   const sec = seconds || getRestSec();
+  _restLabel = label || '';
   _restTotalMs = sec * 1000;
   _restEndsAt  = Date.now() + _restTotalMs;
   _restFired   = false;
@@ -1289,6 +1338,8 @@ function renderRestBar(){
   const pct = Math.max(0, Math.min(100, 100 - (msLeft / _restTotalMs) * 100));
   bar.querySelector('.rest-time').textContent = mm+':'+ss;
   bar.querySelector('.rest-fill').style.width = pct+'%';
+  const lblEl = bar.querySelector('.rest-lbl');
+  if(lblEl) lblEl.textContent = _restLabel ? 'REST · ' + _restLabel : 'REST';
 }
 
 // SPARKLINE ────────────────────────────────────────────────────────────
@@ -2869,7 +2920,14 @@ function openSetPopup(exId,setIdx){
     </div>`;
   }
 
-  document.getElementById('pu-nip-tip').innerHTML=tipHtml;
+  // Execution standard — always shown beneath the situational tip so every
+  // rep is loaded in the stretch with a controlled tempo (King's core point).
+  const cue=getExecCue(ex);
+  const execHtml=`<div class="nip-tip" style="margin-bottom:14px;border-color:rgba(94,196,106,.18);background:rgba(94,196,106,.05)">
+    <div class="nip-lbl" style="color:#5ec46a">⏱ Execution · ${restTierLabel(ex.id)||'lift'}</div>
+    <div class="nip-txt">${_esc(cue.tempo)}. ${_esc(cue.stretch)}${_esc(cue.partial)}</div>
+  </div>`;
+  document.getElementById('pu-nip-tip').innerHTML=tipHtml+execHtml;
 
   document.getElementById('pu-weight').value=prefill||'';
   document.getElementById('pu-reps').value=alreadyDone&&current.reps?current.reps:'';
@@ -2965,8 +3023,24 @@ function confirmSet(){
     buzz(HAPTIC_SET);
   }
 
+  // Rep-cliff alert: if this set finished the exercise and reps cratered
+  // from set 1 (a fatigue/effort-management tell), nudge the user toward
+  // more rest or an easier opening set — King's effort-distribution point.
+  const exDoneNow = Array.from({length:ex.sets},(_,i)=>S.setData[`${exId}-${i}`]).every(Boolean);
+  if(exDoneNow && ex.sets>=2 && !PU.editing){
+    const repsArr = Array.from({length:ex.sets},(_,i)=>{
+      const sd=S.setData[`${exId}-${i}`]; return sd&&sd.reps?sd.reps:null;
+    }).filter(v=>v!=null);
+    if(repsArr.length>=2){
+      const drop = repsArr[0] - repsArr[repsArr.length-1];
+      if(drop>=4){
+        showToast(`⚠️ Reps fell ${repsArr[0]}→${repsArr[repsArr.length-1]} on ${ex.name}. Rest longer or start set 1 at 1–2 RIR next time.`);
+      }
+    }
+  }
+
   // Check whether this set completed the whole session. If so, big buzz.
-  // Otherwise start the rest timer.
+  // Otherwise start the rest timer — duration matched to the lift type.
   const totalSets = Object.keys(S.setData).length;
   let neededSets = 0;
   getDay().categories.forEach(c=>{
@@ -2977,7 +3051,7 @@ function confirmSet(){
   if(totalSets >= neededSets && neededSets > 0){
     buzz(HAPTIC_DONE);
   } else {
-    startRestTimer();
+    startRestTimer(getRestForEx(exId), restTierLabel(exId));
   }
 
   render();
@@ -4299,7 +4373,7 @@ function buildCoachContext(){
   // 1. STATE -------------------------------------------------------
   lines.push('=== STATE ===');
   lines.push('Today: ' + today);
-  lines.push('Default rest: ' + getRestSec() + 's');
+  lines.push('Rest: auto-scaled per lift (heavy compound ~180s, compound ~120s, isolation ~75s).');
   if(S && S.active){
     const dayName = (DAYS[S.dayIdx] && (DAYS[S.dayIdx].label || DAYS[S.dayIdx].id)) || '?';
     lines.push('Active session: Week ' + S.week + ', Session ' + S.session + ' (' + dayName + ')');
@@ -4348,8 +4422,9 @@ function buildCoachContext(){
   // 2b. PROGRAMMING BALANCE (fatigue/axial fundamentals) -----------
   // So the coach reasons with the same sustainability model the app's
   // auto-selection uses (Nippard SFR + King axial-load management).
-  lines.push('\n=== PROGRAMMING BALANCE ===');
+  lines.push('\n=== PROGRAMMING BALANCE & EXECUTION ===');
   lines.push('The app auto-balances each session: only ONE heavy-axial lift (squat OR hinge) per day, no redundant movement patterns, and it softens heavy barbell rows when the spine is recently taxed.');
+  lines.push('Execution standards enforced in-app (Justin King style): controlled 2-3s eccentrics, pause + load the STRETCHED position, leave 1-2 RIR on early sets and only the last set near failure, and lengthened partials on isolations when full reps run out. The app alerts the user when reps cliff (a sign of going to failure too early or resting too little). Main presses/squats were shifted from 5-8 to 6-10 reps for sustainable hypertrophy. Reinforce these cues; flag when the logged data shows failure-on-every-set rep crashes.');
   try {
     const legF = (typeof getLegFocus === 'function') ? getLegFocus() : null;
     if(legF) lines.push('Next/current LEG day focus: ' + legF.toUpperCase() + (legF==='hinge' ? ' (heavy RDL + machine quad)' : ' (heavy front squat + light DB hinge)') + '. Leg days alternate quad↔hinge automatically.');
