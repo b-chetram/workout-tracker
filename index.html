@@ -452,6 +452,7 @@ input[type=number]::-webkit-inner-spin-button{-webkit-appearance:none}
         <div class="app-title">Workout Tracker</div>
       </div>
       <div class="tb-btns">
+        <button class="tbtn" onclick="showView('volume')">📈 Vol</button>
         <button class="tbtn" onclick="showView('history')">📊 Log</button>
         <button class="tbtn" onclick="openCoachSheet()">🤖</button>
       </div>
@@ -482,6 +483,16 @@ input[type=number]::-webkit-inner-spin-button{-webkit-appearance:none}
     <div></div>
   </div>
   <div class="content" id="history-content"></div>
+</div>
+
+<!-- VOLUME -->
+<div id="view-volume" class="view">
+  <div class="back-bar">
+    <button class="back-btn" onclick="showView('tracker')">← Back</button>
+    <div class="back-title">Weekly Volume</div>
+    <div></div>
+  </div>
+  <div class="content" id="volume-content"></div>
 </div>
 
 <!-- PLATEAU -->
@@ -808,12 +819,12 @@ function getRandomSong(){return SONGS[Math.floor(Math.random()*SONGS.length)];}
 const MUSCLE_META = {
   // ── PUSH ──────────────────────────────────────────────────────────
   ohp:        {primary:['shoulders','triceps'],    secondary:['upper_chest','core'],       mechanics:['vertical_push','compound','bilateral','overhead']},
-  db_bench:   {primary:['chest','triceps'],         secondary:['shoulders'],                mechanics:['horizontal_push','compound','bilateral']},
-  dips:       {primary:['chest','triceps'],         secondary:['shoulders'],                mechanics:['horizontal_push','compound','bilateral','bodyweight']},
-  dips_bw:    {primary:['chest','triceps'],         secondary:['shoulders'],                mechanics:['horizontal_push','compound','bilateral','bodyweight']},
+  db_bench:   {primary:['chest'],                   secondary:['triceps','shoulders'],      mechanics:['horizontal_push','compound','bilateral']},
+  dips:       {primary:['chest'],                   secondary:['triceps','shoulders'],      mechanics:['horizontal_push','compound','bilateral','bodyweight']},
+  dips_bw:    {primary:['chest'],                   secondary:['triceps','shoulders'],      mechanics:['horizontal_push','compound','bilateral','bodyweight']},
   cable_fly:  {primary:['chest'],                   secondary:['shoulders'],                mechanics:['horizontal_push','fly','isolation']},
   db_fly:     {primary:['chest'],                   secondary:['shoulders'],                mechanics:['horizontal_push','fly','isolation']},
-  pushup_w:   {primary:['chest','triceps'],         secondary:['shoulders'],                mechanics:['horizontal_push','compound','bilateral','bodyweight']},
+  pushup_w:   {primary:['chest'],                   secondary:['triceps','shoulders'],      mechanics:['horizontal_push','compound','bilateral','bodyweight']},
   laterals:   {primary:['side_delts'],              secondary:[],                           mechanics:['lateral_raise','isolation']},
   lat_cable:  {primary:['side_delts'],              secondary:[],                           mechanics:['lateral_raise','isolation']},
   arnold:     {primary:['shoulders'],               secondary:['triceps'],                  mechanics:['vertical_push','compound','bilateral','overhead']},
@@ -825,10 +836,10 @@ const MUSCLE_META = {
   tri_kick:   {primary:['triceps'],                 secondary:[],                           mechanics:['elbow_extension','isolation']},
   tri_dip:    {primary:['triceps','chest'],          secondary:[],                           mechanics:['horizontal_push','compound','bilateral','bodyweight']},
   // ── PULL ──────────────────────────────────────────────────────────
-  lat_pull:   {primary:['lats','biceps'],            secondary:['rear_delts'],               mechanics:['vertical_pull','compound','bilateral']},
-  pullups:    {primary:['lats','biceps'],            secondary:['rear_delts'],               mechanics:['vertical_pull','compound','bilateral','bodyweight']},
-  pullups_bw: {primary:['lats','biceps'],            secondary:['rear_delts'],               mechanics:['vertical_pull','compound','bilateral','bodyweight']},
-  sa_pull:    {primary:['lats','biceps'],            secondary:['rear_delts'],               mechanics:['vertical_pull','compound','unilateral']},
+  lat_pull:   {primary:['lats'],                     secondary:['biceps','rear_delts'],      mechanics:['vertical_pull','compound','bilateral']},
+  pullups:    {primary:['lats'],                     secondary:['biceps','rear_delts'],      mechanics:['vertical_pull','compound','bilateral','bodyweight']},
+  pullups_bw: {primary:['lats'],                     secondary:['biceps','rear_delts'],      mechanics:['vertical_pull','compound','bilateral','bodyweight']},
+  sa_pull:    {primary:['lats'],                     secondary:['biceps','rear_delts'],      mechanics:['vertical_pull','compound','unilateral']},
   bar_row:    {primary:['lats','traps','rhomboids'], secondary:['biceps'],                   mechanics:['horizontal_pull','compound','bilateral','spinal_loading']},
   pendlay:    {primary:['lats','traps'],             secondary:['biceps'],                   mechanics:['horizontal_pull','compound','bilateral','spinal_loading']},
   cable_row:  {primary:['lats','traps'],             secondary:['biceps'],                   mechanics:['horizontal_pull','compound','bilateral']},
@@ -982,6 +993,126 @@ function getExecCue(ex){
     ? ' Out of full reps? Add 2 to 3 partials in the stretched position.'
     : '';
   return { tempo, stretch, partial };
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// WEEKLY VOLUME TRACKING  (Israetel volume landmarks: MEV / MAV / MRV)
+// ══════════════════════════════════════════════════════════════════════
+// Counts hard sets per muscle across ONE full Push/Pull/Legs rotation (the
+// most recent session of each day type), then extrapolates to a weekly
+// estimate via the ~4-day cycle (≈1.75 cycles/week). Primary muscle worked
+// = 1 set, secondary = 0.5 (standard fractional-volume accounting). Multiple
+// primary tags that map to the same display group only count ONCE per set.
+const CYCLES_PER_WEEK = 7/4;
+const MUSCLE_GROUP = {
+  chest:'Chest', upper_chest:'Chest',
+  side_delts:'Side Delts',
+  shoulders:'Front/Press Delts', front_delts:'Front/Press Delts',
+  rear_delts:'Rear Delts',
+  lats:'Back', traps:'Back', rhomboids:'Back', upper_back:'Back',
+  biceps:'Biceps', brachialis:'Biceps',
+  triceps:'Triceps',
+  quads:'Quads', hamstrings:'Hamstrings', glutes:'Glutes',
+  calves:'Calves', soleus:'Calves',
+  core:'Core', lower_back:'Core'
+};
+// Weekly hard-set landmarks per group: [MEV, MAV-low, MAV-high, MRV].
+const VOL_LANDMARKS = {
+  'Chest':            [8,12,18,22],
+  'Back':             [10,14,22,26],
+  'Side Delts':       [8,14,22,26],
+  'Rear Delts':       [6,10,18,22],
+  'Front/Press Delts':[0,6,12,16],
+  'Biceps':           [8,12,18,22],
+  'Triceps':          [8,10,16,20],
+  'Quads':            [8,12,18,20],
+  'Hamstrings':       [6,10,16,20],
+  'Glutes':           [4,8,14,16],
+  'Calves':           [8,12,16,20],
+  'Core':             [0,6,12,16]
+};
+const MUSCLE_ORDER = ['Chest','Back','Side Delts','Rear Delts','Front/Press Delts','Biceps','Triceps','Quads','Hamstrings','Glutes','Calves','Core'];
+
+function getCycleVolume(){
+  const dayTypes=['push','pull','legs'];
+  const vol={};
+  for(const dt of dayTypes){
+    // most recent session for this day type
+    let best=null,bs=-1;
+    for(const exId of Object.keys(DB||{})){
+      if(!Array.isArray(DB[exId])) continue;
+      for(const e of DB[exId]){
+        if(!e||e.day!==dt||!Array.isArray(e.sets)||!e.sets.length) continue;
+        const sc=(e.week||0)*1000+(e.session||0);
+        if(sc>bs){bs=sc;best={week:e.week,session:e.session};}
+      }
+    }
+    if(!best) continue;
+    for(const exId of Object.keys(DB)){
+      if(!Array.isArray(DB[exId])) continue;
+      const e=DB[exId].find(x=>x&&x.day===dt&&x.week===best.week&&x.session===best.session&&Array.isArray(x.sets)&&x.sets.length);
+      if(!e) continue;
+      if(e.intent==='pump'||e.intent==='light'||e.deload===true) continue;
+      const meta=getMeta(exId); if(!meta) continue;
+      const n=e.sets.filter(Boolean).length;
+      const primGroups=new Set((meta.primary||[]).map(m=>MUSCLE_GROUP[m]).filter(Boolean));
+      const secGroups=new Set((meta.secondary||[]).map(m=>MUSCLE_GROUP[m]).filter(Boolean));
+      primGroups.forEach(g=>{ vol[g]=(vol[g]||0)+n; });
+      secGroups.forEach(g=>{ if(!primGroups.has(g)) vol[g]=(vol[g]||0)+n*0.5; });
+    }
+  }
+  return vol;
+}
+function getWeeklyVolumeReport(){
+  const cyc=getCycleVolume();
+  const rows=[];
+  for(const g of MUSCLE_ORDER){
+    const weekly=Math.round((cyc[g]||0)*CYCLES_PER_WEEK*2)/2; // round to nearest 0.5
+    const lm=VOL_LANDMARKS[g]||[0,0,0,0];
+    let status,color;
+    if(weekly<lm[0])        { status='Below MEV — add volume'; color='#e07070'; }
+    else if(weekly<lm[1])   { status='Maintenance — low';      color='#e8a838'; }
+    else if(weekly<=lm[2])  { status='Optimal';                color='#5ec46a'; }
+    else if(weekly<=lm[3])  { status='High';                   color='#e8a838'; }
+    else                    { status='Above MRV — junk risk';  color='#e07070'; }
+    rows.push({muscle:g,weekly,lm,status,color});
+  }
+  return rows;
+}
+
+function renderVolume(){
+  const el=document.getElementById('volume-content');
+  if(!el) return;
+  const rows=getWeeklyVolumeReport();
+  if(!rows.some(r=>r.weekly>0)){
+    el.innerHTML='<div style="color:#666;padding:30px 20px;text-align:center;line-height:1.6">Log at least one push, pull, and legs session to see your weekly volume breakdown.</div>';
+    return;
+  }
+  let html=`<div class="nip-tip" style="margin-bottom:14px">
+    <div class="nip-lbl">📈 Estimated Weekly Set Volume</div>
+    <div class="nip-txt">Hard sets per muscle per week, from your most recent push/pull/legs rotation (~1.75 cycles/week). The green band is the optimal range (MAV). Primary muscle = 1 set, assisting muscle = 0.5.</div>
+  </div>`;
+  for(const r of rows){
+    const scaleMax=Math.max(r.lm[3],r.weekly)*1.12||1;
+    const pct=v=>Math.max(0,Math.min(100,(v/scaleMax)*100));
+    const bandL=pct(r.lm[1]), bandW=pct(r.lm[2])-pct(r.lm[1]), fill=pct(r.weekly);
+    html+=`<div style="margin-bottom:15px">
+      <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:5px;gap:8px">
+        <div style="font-weight:800;font-size:14px">${r.muscle}</div>
+        <div style="font-size:12px;font-weight:700;color:${r.color};text-align:right">${r.weekly} / wk · ${r.status}</div>
+      </div>
+      <div style="position:relative;height:13px;background:#171717;border-radius:7px;overflow:hidden">
+        <div style="position:absolute;left:${bandL}%;width:${bandW}%;top:0;bottom:0;background:rgba(94,196,106,.22)"></div>
+        <div style="position:absolute;left:0;width:${fill}%;top:0;bottom:0;background:${r.color};border-radius:7px;opacity:.9"></div>
+      </div>
+      <div style="font-size:10px;color:#555;margin-top:3px">MEV ${r.lm[0]} · optimal ${r.lm[1]}–${r.lm[2]} · MRV ${r.lm[3]}</div>
+    </div>`;
+  }
+  html+=`<div class="nip-tip" style="margin-top:6px">
+    <div class="nip-lbl">💡 How to read this</div>
+    <div class="nip-txt"><b>Below MEV</b> = too little to grow — add sets or frequency. <b>Optimal</b> = the productive sweet spot. <b>Above MRV</b> = likely junk volume / recovery drain — trim a set. Estimates assume your ~4-day rotation; train a muscle more often and its weekly number rises.</div>
+  </div>`;
+  el.innerHTML=html;
 }
 
 // ══════════════════════════════════════════════════════════════════════
@@ -2820,6 +2951,7 @@ function showView(v){
   document.querySelectorAll('.view').forEach(el=>el.classList.remove('active'));
   document.getElementById('view-'+v).classList.add('active');
   if(v==='history')renderHistory();
+  if(v==='volume')renderVolume();
   if(v==='vibes')initVibes();
   window.scrollTo(0,0);
 }
@@ -4425,6 +4557,18 @@ function buildCoachContext(){
   lines.push('\n=== PROGRAMMING BALANCE & EXECUTION ===');
   lines.push('The app auto-balances each session: only ONE heavy-axial lift (squat OR hinge) per day, no redundant movement patterns, and it softens heavy barbell rows when the spine is recently taxed.');
   lines.push('Execution standards enforced in-app (Justin King style): controlled 2-3s eccentrics, pause + load the STRETCHED position, leave 1-2 RIR on early sets and only the last set near failure, and lengthened partials on isolations when full reps run out. The app alerts the user when reps cliff (a sign of going to failure too early or resting too little). Main presses/squats were shifted from 5-8 to 6-10 reps for sustainable hypertrophy. Reinforce these cues; flag when the logged data shows failure-on-every-set rep crashes.');
+  // Weekly volume vs landmarks — so the coach can spot under/over-trained muscles.
+  try {
+    const vr=(typeof getWeeklyVolumeReport==='function')?getWeeklyVolumeReport():[];
+    if(vr.length){
+      const fmt=vr.map(r=>r.muscle+' '+r.weekly+' ('+r.status.split(' —')[0]+')').join('; ');
+      lines.push('Est. weekly sets/muscle (MEV-MAV-MRV landmarks): '+fmt+'.');
+      const low=vr.filter(r=>r.weekly<r.lm[1]).map(r=>r.muscle);
+      const high=vr.filter(r=>r.weekly>r.lm[3]).map(r=>r.muscle);
+      if(low.length)  lines.push('UNDER optimal volume: '+low.join(', ')+' — candidates for more sets/frequency.');
+      if(high.length) lines.push('OVER MRV (junk-volume risk): '+high.join(', ')+'.');
+    }
+  } catch(e){}
   try {
     const legF = (typeof getLegFocus === 'function') ? getLegFocus() : null;
     if(legF) lines.push('Next/current LEG day focus: ' + legF.toUpperCase() + (legF==='hinge' ? ' (heavy RDL + machine quad)' : ' (heavy front squat + light DB hinge)') + '. Leg days alternate quad↔hinge automatically.');
