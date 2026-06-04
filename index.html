@@ -653,9 +653,11 @@ const EXERCISE_DB = {
         {id:'db_fly',    name:'Dumbbell Flyes',             sets:3, rep:'10 to 12',sw:30,  unit:'lb DB',   equip:'dumbbell', prog:'Hit 3×12 → add 2.5 lb. Big stretch at bottom, slight bend in elbows.'},
         {id:'pushup_w',  name:'Weighted Push Ups',          sets:3, rep:'12 to 15',sw:35,  unit:'lb plate',equip:'bodyweight', prog:'Hit 3×15 → add 10 lb plate. Full ROM, chest to floor.'},
       ]},
-      { id:'push_shoulder', name:'Shoulder Accessory', min:1, max:1, exercises:[
-        {id:'laterals',  name:'Lateral Raises (DB)',        sets:3, rep:'12 to 15',sw:25,  unit:'lb DB',   equip:'dumbbell', prog:'Hit 3×15 → add 2.5 lb. Strict form, slight lean forward.'},
-        {id:'lat_cable', name:'Lateral Raises (Cable)',     sets:3, rep:'12 to 15',sw:20,  unit:'lb cable',equip:'cable', prog:'Hit 3×15 → add 2.5 lb. Behind the body for better stretch.'},
+      { id:'push_sidedelt', name:'Side Delts', min:2, max:2, exercises:[
+        {id:'laterals',  name:'Lateral Raises (DB)',        sets:3, rep:'12 to 20',sw:25,  unit:'lb DB',   equip:'dumbbell', prog:'Hit top of range → add 2.5 lb. Strict, slight forward lean, lead with the elbow.'},
+        {id:'lat_cable', name:'Lateral Raises (Cable)',     sets:3, rep:'12 to 20',sw:20,  unit:'lb cable',equip:'cable', prog:'Hit top of range → add 2.5 lb. Cable behind the body for a loaded stretch at the bottom.'},
+      ]},
+      { id:'push_shoulder', name:'Shoulder Press (optional)', min:0, max:1, exercises:[
         {id:'arnold',    name:'Arnold Press',               sets:3, rep:'8 to 12', sw:45,  unit:'lb DB',   equip:'dumbbell', prog:'Hit 3×12 → add 5 lb. Full rotation, press to lockout.'},
         {id:'front_raise',name:'Front Raises',              sets:3, rep:'12 to 15',sw:25,  unit:'lb DB',   equip:'dumbbell', prog:'Hit 3×15 → add 2.5 lb. Thumbs up grip targets anterior delt.'},
       ]},
@@ -688,6 +690,15 @@ const EXERCISE_DB = {
         {id:'face_pull', name:'Face Pulls',                 sets:3, rep:'15 to 20',sw:55,  unit:'lb cable',equip:'cable', prog:'Add 5 lb every 2 to 3 weeks. Non negotiable for shoulder health.'},
         {id:'rev_fly',   name:'Reverse DB Flyes',           sets:3, rep:'12 to 15',sw:20,  unit:'lb DB',   equip:'dumbbell', prog:'Hit 3×15 → add 2.5 lb. Bend at hips, pinch shoulder blades.'},
         {id:'band_pull', name:'Band Pull Aparts',           sets:3, rep:'15 to 20',sw:0,   unit:'band',    equip:'band', prog:'Progress to thicker band when 3×20 is easy.'},
+      ]},
+      // 2nd weekly side-delt hit — side delts were below MEV on push alone.
+      { id:'pull_sidedelt', name:'Side Delts', min:1, max:1, exercises:[
+        {id:'lat_cab_p', name:'Lateral Raises (Cable)',     sets:3, rep:'12 to 20',sw:20,  unit:'lb cable',equip:'cable', prog:'Hit top of range → add 2.5 lb. Loaded stretch at the bottom, lead with the elbow.'},
+        {id:'lat_db_p',  name:'Lateral Raises (DB)',        sets:3, rep:'12 to 20',sw:25,  unit:'lb DB',   equip:'dumbbell', prog:'Hit top of range → add 2.5 lb. Strict, slight forward lean.'},
+      ]},
+      // 2nd weekly calf hit — calves thrive on frequency (were under optimal).
+      { id:'pull_calf', name:'Calves', min:1, max:1, exercises:[
+        {id:'calf_p',    name:'Calf Raise',                 sets:4, rep:'12 to 20',sw:200, unit:'lb',      equip:'machine', prog:'Hit top of range → add weight. Full stretch at the bottom, 2 sec pause, hard squeeze at the top.'},
       ]},
       { id:'pull_bi', name:'Biceps', min:2, max:2, exercises:[
         {id:'bar_curl',  name:'Barbell Curls',              sets:3, rep:'8 to 10', sw:55,  unit:'lb bar',  equip:'barbell', prog:'Hit 3×10 → add 5 lb. Full supination, controlled negative.'},
@@ -827,6 +838,9 @@ const MUSCLE_META = {
   pushup_w:   {primary:['chest'],                   secondary:['triceps','shoulders'],      mechanics:['horizontal_push','compound','bilateral','bodyweight']},
   laterals:   {primary:['side_delts'],              secondary:[],                           mechanics:['lateral_raise','isolation']},
   lat_cable:  {primary:['side_delts'],              secondary:[],                           mechanics:['lateral_raise','isolation']},
+  lat_cab_p:  {primary:['side_delts'],              secondary:[],                           mechanics:['lateral_raise','isolation']},
+  lat_db_p:   {primary:['side_delts'],              secondary:[],                           mechanics:['lateral_raise','isolation']},
+  calf_p:     {primary:['calves'],                  secondary:[],                           mechanics:['calf_isolation','bilateral']},
   arnold:     {primary:['shoulders'],               secondary:['triceps'],                  mechanics:['vertical_push','compound','bilateral','overhead']},
   front_raise:{primary:['front_delts'],             secondary:[],                           mechanics:['isolation','vertical_push','overhead']},
   tri_push:   {primary:['triceps'],                 secondary:[],                           mechanics:['elbow_extension','isolation']},
@@ -936,6 +950,9 @@ const EX_LOAD = {
   pushup_w:   {axial:0, pattern:'horiz_push',     sfr:'med'},
   laterals:   {axial:0, pattern:'lateral',        sfr:'high'},
   lat_cable:  {axial:0, pattern:'lateral',        sfr:'high'},
+  lat_cab_p:  {axial:0, pattern:'lateral',        sfr:'high'},
+  lat_db_p:   {axial:0, pattern:'lateral',        sfr:'high'},
+  calf_p:     {axial:0, pattern:'calf',           sfr:'high'},
   arnold:     {axial:1, pattern:'vert_push',      sfr:'high'},
   front_raise:{axial:0, pattern:'front_raise',    sfr:'med'},
   tri_push:   {axial:0, pattern:'tri_ext',        sfr:'high'},
