@@ -693,7 +693,7 @@ const EXERCISE_DB = {
     categories: [
       { id:'legs_quad', name:'Quad Dominant (Main)', min:1, max:1, isMain:true, exercises:[
         {id:'hack_sq',   name:'Hack Squat',                sets:3, rep:'8 to 10', sw:120, unit:'lb',      equip:'machine', prog:'Leave 1 to 2 RIR on sets 1 to 2, push last set to failure. Hit top of range 2 sessions → add 10 lb.'},
-        {id:'bb_squat',  name:'Barbell Back Squat',         sets:3, rep:'5 to 8',  sw:165, unit:'lb',      equip:'barbell', prog:'Leave 1 to 2 RIR on sets 1 to 2, push last set to failure. Hit top of range 2 sessions → add 10 lb.'},
+        {id:'bb_squat',  name:'Front Squat',                sets:3, rep:'5 to 8',  sw:165, unit:'lb',      equip:'barbell', prog:'Leave 1 to 2 RIR on sets 1 to 2, push last set to failure. Hit top of range 2 sessions → add 10 lb. Upright torso, elbows high.'},
         {id:'goblet_sq', name:'Goblet Squat',               sets:3, rep:'10 to 12',sw:60,  unit:'lb DB',   equip:'dumbbell', prog:'Hit 3×12 → add 5 lb. Great for form work and depth.'},
         {id:'leg_press', name:'Leg Press',                  sets:3, rep:'10 to 12',sw:360, unit:'lb',      equip:'machine', prog:'Hit 3×12 → add 20 lb. Full ROM, do not lock knees.'},
       ]},
@@ -844,7 +844,7 @@ const MUSCLE_META = {
   spider_curl:{primary:['biceps'],                   secondary:[],                           mechanics:['elbow_flexion','isolation','bilateral']},
   // ── LEGS ──────────────────────────────────────────────────────────
   hack_sq:    {primary:['quads','glutes'],            secondary:['hamstrings'],               mechanics:['knee_dominant','compound','bilateral']},
-  bb_squat:   {primary:['quads','glutes'],            secondary:['hamstrings','core'],        mechanics:['knee_dominant','compound','bilateral','spinal_loading']},
+  bb_squat:   {primary:['quads'],                    secondary:['glutes','core','upper_back'],mechanics:['knee_dominant','compound','bilateral','spinal_loading']},
   goblet_sq:  {primary:['quads','glutes'],            secondary:['hamstrings'],               mechanics:['knee_dominant','compound','bilateral']},
   leg_press:  {primary:['quads','glutes'],            secondary:['hamstrings'],               mechanics:['knee_dominant','compound','bilateral']},
   rdl:        {primary:['hamstrings','glutes'],       secondary:['lower_back'],               mechanics:['hip_dominant','compound','bilateral','spinal_loading']},
@@ -864,6 +864,78 @@ const MUSCLE_META = {
 
 // Helper: get muscle meta for an exercise (returns null if not found)
 function getMeta(exId){ return MUSCLE_META[exId] || null; }
+
+// ══════════════════════════════════════════════════════════════════════
+// FATIGUE / LOAD MODEL  (Nippard SFR + King axial-load management)
+// ══════════════════════════════════════════════════════════════════════
+// Per-exercise systemic cost used to balance a session and avoid
+// stacking fatigue across days. Three dimensions:
+//   axial   0 = supported/machine/seated (no spinal load)
+//           1 = moderate free-weight (DB hinge, lunges, standing press)
+//           2 = heavy barbell squat / hinge / row (high spinal load)
+//   pattern movement-pattern bucket. Two auto-picks of the SAME pattern
+//           in one session are flagged redundant (e.g. leg press + single
+//           leg press are both squat_machine).
+//   sfr     stimulus-to-fatigue ratio: 'high' picks are favored for
+//           accessory slots since they grow muscle for less systemic cost.
+const EX_LOAD = {
+  // ── LEGS ──
+  hack_sq:    {axial:0, pattern:'squat_machine',  sfr:'high'},
+  bb_squat:   {axial:2, pattern:'squat_bar',      sfr:'high'}, // front squat
+  goblet_sq:  {axial:1, pattern:'squat_bar',      sfr:'med'},
+  leg_press:  {axial:0, pattern:'squat_machine',  sfr:'high'},
+  rdl:        {axial:2, pattern:'hinge',          sfr:'high'},
+  sldl:       {axial:1, pattern:'hinge',          sfr:'high'},
+  sl_press:   {axial:0, pattern:'squat_machine',  sfr:'med'},
+  bss:        {axial:1, pattern:'lunge',          sfr:'high'},
+  lunges:     {axial:1, pattern:'lunge',          sfr:'high'},
+  step_ups:   {axial:1, pattern:'lunge',          sfr:'low'},
+  leg_curl:   {axial:0, pattern:'ham_curl',       sfr:'high'},
+  nordic:     {axial:1, pattern:'ham_curl',       sfr:'med'},
+  db_leg_curl:{axial:0, pattern:'ham_curl',       sfr:'med'},
+  leg_ext:    {axial:0, pattern:'quad_ext',       sfr:'high'},
+  calves:     {axial:0, pattern:'calf',           sfr:'high'},
+  calves_seat:{axial:0, pattern:'calf',           sfr:'high'},
+  calves_db:  {axial:0, pattern:'calf',           sfr:'med'},
+  // ── PULL ──
+  lat_pull:   {axial:0, pattern:'vert_pull',      sfr:'high'},
+  pullups:    {axial:1, pattern:'vert_pull',      sfr:'high'},
+  pullups_bw: {axial:1, pattern:'vert_pull',      sfr:'high'},
+  sa_pull:    {axial:0, pattern:'vert_pull',      sfr:'med'},
+  bar_row:    {axial:2, pattern:'horiz_pull_free',sfr:'high'},
+  pendlay:    {axial:2, pattern:'horiz_pull_free',sfr:'med'},
+  cable_row:  {axial:0, pattern:'horiz_pull_sup', sfr:'high'},
+  db_row:     {axial:1, pattern:'horiz_pull_sup', sfr:'high'},
+  face_pull:  {axial:0, pattern:'rear_delt',      sfr:'high'},
+  rev_fly:    {axial:0, pattern:'rear_delt',      sfr:'high'},
+  band_pull:  {axial:0, pattern:'rear_delt',      sfr:'med'},
+  bar_curl:   {axial:0, pattern:'curl',           sfr:'high'},
+  ham_curl:   {axial:0, pattern:'curl',           sfr:'high'},
+  inc_curl:   {axial:0, pattern:'curl',           sfr:'high'},
+  preacher:   {axial:0, pattern:'curl',           sfr:'high'},
+  cable_curl: {axial:0, pattern:'curl',           sfr:'high'},
+  spider_curl:{axial:0, pattern:'curl',           sfr:'med'},
+  // ── PUSH ──
+  ohp:        {axial:1, pattern:'vert_push',      sfr:'high'},
+  db_bench:   {axial:0, pattern:'horiz_push',     sfr:'high'},
+  dips:       {axial:0, pattern:'dip',            sfr:'high'},
+  dips_bw:    {axial:0, pattern:'dip',            sfr:'high'},
+  cable_fly:  {axial:0, pattern:'fly',            sfr:'high'},
+  db_fly:     {axial:0, pattern:'fly',            sfr:'med'},
+  pushup_w:   {axial:0, pattern:'horiz_push',     sfr:'med'},
+  laterals:   {axial:0, pattern:'lateral',        sfr:'high'},
+  lat_cable:  {axial:0, pattern:'lateral',        sfr:'high'},
+  arnold:     {axial:1, pattern:'vert_push',      sfr:'high'},
+  front_raise:{axial:0, pattern:'front_raise',    sfr:'med'},
+  tri_push:   {axial:0, pattern:'tri_ext',        sfr:'high'},
+  tri_oh:     {axial:0, pattern:'tri_ext',        sfr:'high'},
+  skull:      {axial:0, pattern:'tri_ext',        sfr:'high'},
+  cgbp:       {axial:1, pattern:'horiz_push',     sfr:'med'},
+  tri_kick:   {axial:0, pattern:'tri_ext',        sfr:'low'},
+  tri_dip:    {axial:0, pattern:'dip',            sfr:'med'},
+};
+function getLoad(exId){ return EX_LOAD[exId] || {axial:0, pattern:null, sfr:'med'}; }
+const SFR_RANK = {high:2, med:1, low:0};
 
 // ══════════════════════════════════════════════════════════════════════
 // ENHANCEMENTS: haptics, audio cue, rest timer, sparklines,
@@ -2003,6 +2075,150 @@ function pillLabel(ex, cat){
 
 // For main categories: find which exercise was used MOST RECENTLY
 // and recommend a different one for this session (rotation).
+// ══════════════════════════════════════════════════════════════════════
+// SESSION-AWARE BALANCE ENGINE
+// ══════════════════════════════════════════════════════════════════════
+// Populated during each render() pass; read by the category header to
+// show WHY a pick was auto-balanced. Cleared at the top of render().
+let _selectionReasons = {};
+let _recentAxialCache = null;
+
+// Find the most recent fully-logged legs session (week,session).
+function getLastLegSession(){
+  let best=null, bestScore=-1;
+  for(const exId of Object.keys(DB||{})){
+    if(!Array.isArray(DB[exId])) continue;
+    for(const e of DB[exId]){
+      if(!e || e.day!=='legs' || !Array.isArray(e.sets) || !e.sets.length) continue;
+      const score=(e.week||0)*1000+(e.session||0);
+      if(score>bestScore){ bestScore=score; best={week:e.week, session:e.session}; }
+    }
+  }
+  return best;
+}
+
+// What did the LAST leg session emphasise? Reads the stamped legFocus tag
+// (deterministic), falling back to inferring from which heavy main was run.
+function getLastLegFocus(){
+  const last=getLastLegSession();
+  if(!last) return null;
+  for(const exId of Object.keys(DB||{})){
+    if(!Array.isArray(DB[exId])) continue;
+    const e=DB[exId].find(x=>x && x.day==='legs' && x.week===last.week && x.session===last.session && (x.legFocus==='quad'||x.legFocus==='hinge'));
+    if(e) return e.legFocus;
+  }
+  // Fallback for pre-tag data: heavy barbell RDL logged → it was hinge day.
+  const rdl=(DB.rdl||[]).some(e=>e.week===last.week && e.session===last.session && e.sets && e.sets.length);
+  return rdl ? 'hinge' : 'quad';
+}
+
+// Resolve TODAY'S leg focus. During an active leg session the focus is
+// locked (set at confirmSession). Otherwise alternate from history.
+function getLegFocus(){
+  if(S.active && S.lastDayId==='legs' && (S.legFocus==='quad'||S.legFocus==='hinge'))
+    return S.legFocus;
+  const lastF=getLastLegFocus();
+  if(lastF==='hinge') return 'quad';
+  if(lastF==='quad')  return 'hinge';
+  return 'hinge'; // first-ever leg day: heavy RDL + machine quad = 1 axial lift
+}
+
+// Sum the axial cost of every logged exercise across the last N real
+// (non-deload, non-pump) sessions. ~2 per heavy barbell lift. Memoized
+// per render pass since it scans the whole DB.
+function getRecentAxialLoad(lookback){
+  lookback = lookback || 2;
+  const seen=new Set(); const sessions=[];
+  for(const exId of Object.keys(DB||{})){
+    if(!Array.isArray(DB[exId])) continue;
+    for(const e of DB[exId]){
+      if(!e || !Array.isArray(e.sets) || !e.sets.length) continue;
+      if(e.intent==='pump' || e.intent==='light' || e.deload===true) continue;
+      const key=(e.week||0)*1000+(e.session||0);
+      if(!seen.has(key)){ seen.add(key); sessions.push(key); }
+    }
+  }
+  sessions.sort((a,b)=>b-a);
+  const recent=new Set(sessions.slice(0, lookback));
+  let total=0;
+  for(const exId of Object.keys(DB||{})){
+    if(!Array.isArray(DB[exId])) continue;
+    for(const e of DB[exId]){
+      if(!e || !Array.isArray(e.sets) || !e.sets.length) continue;
+      const key=(e.week||0)*1000+(e.session||0);
+      if(recent.has(key)) total += getLoad(exId).axial;
+    }
+  }
+  return total;
+}
+function recentAxial(){
+  if(_recentAxialCache==null) _recentAxialCache=getRecentAxialLoad(2);
+  return _recentAxialCache;
+}
+
+// The smart-default layer. Returns an array of exercise IDs for the auto
+// branch of getSelectedForCat, or null to fall back to the original logic.
+// Only the categories where balance matters are special-cased; everything
+// else returns null and behaves exactly as before. Records a short "why".
+function smartBalancedPick(catId, cat, day, applySkip){
+  const avail = id => applySkip([id]).length>0;
+  const firstAvail = ids => { for(const id of ids){ if(id && avail(id)) return id; } return null; };
+  const reason = txt => { if(txt) _selectionReasons[catId]=txt; };
+  const bySfr = ids => ids.filter(avail).sort((a,b)=> SFR_RANK[getLoad(b).sfr]-SFR_RANK[getLoad(a).sfr]);
+
+  // ── LEG FOCUS: alternate heavy squat vs heavy hinge, never both ──
+  if(day.id==='legs' && cat.id==='legs_hinge'){
+    const focus=getLegFocus();
+    if(focus==='hinge'){
+      const pick=firstAvail(['rdl','sldl']);
+      if(pick){ reason(pick==='rdl'?'Hinge focus — heavy RDL is today’s main lift':null); return [pick]; }
+    } else {
+      const pick=firstAvail(['sldl','rdl']);
+      if(pick){ reason(pick==='sldl'?'Lighter DB hinge — the squat already loads your spine today':null); return [pick]; }
+    }
+  }
+  if(day.id==='legs' && cat.id==='legs_quad'){
+    const focus=getLegFocus();
+    if(focus==='hinge'){
+      // Heavy hinge today → quad main = zero-axial machine, not a barbell squat
+      const pick=firstAvail(['hack_sq','leg_press','goblet_sq','bb_squat']);
+      if(pick){ reason((pick==='hack_sq'||pick==='leg_press')?'Machine quad — keeps spinal load off on RDL day':null); return [pick]; }
+    } else {
+      // Quad focus → squat pattern is the priority
+      const rot=getMainRotation(cat);
+      const pick=firstAvail([rot.recommended,'bb_squat','hack_sq','leg_press','goblet_sq']);
+      if(pick){ reason('Quad focus — squat pattern is today’s priority'); return [pick]; }
+    }
+  }
+
+  // ── CROSS-DAY RECOVERY: soften the heavy barbell row when the spine
+  //    is already taxed from the last couple of sessions ──
+  if(cat.id==='pull_horiz' && recentAxial()>=3){
+    const pick=firstAvail(['cable_row','db_row','bar_row','pendlay']);
+    if(pick && getLoad(pick).axial<=1){
+      reason('Chest-supported row — heavy hinge/squat in your recent sessions');
+      return [pick];
+    }
+  }
+
+  // ── PATTERN DE-DUP: don't pair the single-leg accessory with the SAME
+  //    movement pattern as the quad main (e.g. leg press + single-leg press) ──
+  if(day.id==='legs' && cat.id==='legs_single'){
+    const quadSel=getSelectedForCat('legs_quad', day);
+    const quadPattern=quadSel.length ? getLoad(quadSel[0]).pattern : null;
+    const ranked=bySfr(cat.exercises.map(e=>e.id));
+    const nonRedundant=ranked.filter(id=> getLoad(id).pattern!==quadPattern);
+    const pick=nonRedundant[0] || ranked[0];
+    if(pick){
+      if(nonRedundant[0] && quadPattern==='squat_machine' && getLoad(pick).pattern==='lunge')
+        reason('Split-squat — avoids doubling up on the leg-press pattern');
+      return [pick];
+    }
+  }
+
+  return null; // no special handling → original logic runs
+}
+
 function getMainRotation(cat){
   let mostRecent = null;
   let mostRecentTime = -1;
@@ -2075,6 +2291,13 @@ function getSelectedForCat(catId, day){
       .map(e=>e.id);
     return applySkip([...withCurrentData, ...defaults].slice(0, getCatLimits(cat).max));
   }
+
+  // SESSION-AWARE SMART DEFAULT: leg-day focus (alternate squat/hinge),
+  // cross-day axial recovery, and movement-pattern de-dup. Returns null
+  // for categories it doesn't manage, falling through to the original
+  // rotation/history logic below. Records a "why" for the session card.
+  const smart = smartBalancedPick(catId, cat, day, applySkip);
+  if(smart && smart.length) return smart;
 
   // For main categories: auto-rotate to a different exercise each session
   if(cat.isMain){
@@ -2717,9 +2940,14 @@ function confirmSet(){
     // Also stamp the session intent (pump/light) so those sessions are similarly
     // excluded from the weight progression algorithm — intentionally light
     // days shouldn't look like adaptation events or trigger weight jumps.
-    entry={week:S.week,session:S.session,day:getExNativeDay(exId),date:todayStr(),
+    // Stamp the leg-day focus (quad/hinge) on legs entries so the next leg
+    // session can alternate deterministically off real history.
+    const nativeDay=getExNativeDay(exId);
+    entry={week:S.week,session:S.session,day:nativeDay,date:todayStr(),
            altIdx:ex.alt?getAltIdx(ex):null,deload:isCurrentDeload()?true:false,
-           intent:S.sessionTag||null,sets:[]};
+           intent:S.sessionTag||null,
+           legFocus:(nativeDay==='legs' && (S.legFocus==='quad'||S.legFocus==='hinge'))?S.legFocus:null,
+           sets:[]};
     DB[exId].push(entry);
   }
   if(!entry.sets)entry.sets=[];
@@ -2924,6 +3152,13 @@ function confirmSession(){
   // the progression algorithm skip these sets (like deload sessions).
   S.sessionTag = (S.sessionAdjustments && S.sessionAdjustments.sessionTag) || null;
 
+  // Lock this leg day's focus (alternates quad ↔ hinge each leg session).
+  // Derived from history BEFORE this session has any sets, so it's stable.
+  if(DAYS[SESS.dayIdx].id==='legs'){
+    const lastF=getLastLegFocus();
+    S.legFocus = lastF==='hinge' ? 'quad' : lastF==='quad' ? 'hinge' : 'hinge';
+  }
+
   window._currentSong=getRandomSong();
   cancelRestTimer();
   requestWakeLock();
@@ -3053,6 +3288,11 @@ function switchDay(i){S.dayIdx=i;S.expandedEx=null;save();render();}
 function render(){
   const day=getDay();
 
+  // Reset the per-render balance-engine state so "why" notes and the
+  // memoized axial-load score are recomputed fresh each paint.
+  _selectionReasons = {};
+  _recentAxialCache = null;
+
   // Session bar
   document.getElementById('sbar-wk').textContent=
     S.active?`Week ${S.week} · Session ${S.session}`:'No active session';
@@ -3109,7 +3349,19 @@ function render(){
     dhdr.style.display='none';
   } else {
     dhdr.style.display='';
-    dhdr.innerHTML=`<div class="dhdr-row" style="justify-content:flex-end">
+    // Leg-day focus chip — shows which emphasis (quad vs hinge) is active
+    // today so the single-heavy-axial-lift design is visible to the user.
+    let focusChip='';
+    if(day.id==='legs'){
+      const f=getLegFocus();
+      const label=f==='hinge'?'🍑 Hinge focus':'🦵 Quad focus';
+      const sub=f==='hinge'?'Heavy RDL · machine quad':'Heavy squat · light hinge';
+      focusChip=`<div style="text-align:left">
+        <div style="font-size:13px;font-weight:800;color:${day.color}">${label}</div>
+        <div style="font-size:11px;color:rgba(255,255,255,.4)">${sub}</div></div>`;
+    }
+    dhdr.innerHTML=`<div class="dhdr-row" style="justify-content:${focusChip?'space-between':'flex-end'}">
+      ${focusChip}
       <div style="text-align:right"><div class="day-pct" style="color:${day.color}">${pct}%</div>
       <div class="day-slbl">${done}/${tot} sets</div></div>
     </div>
@@ -3229,6 +3481,13 @@ function render(){
       </button>`;
     });
     html+=`</div>`;
+
+    // Balance-engine "why" note — only when the smart layer drove this pick
+    // (cleared the moment the user manually overrides the selection).
+    if(_selectionReasons[cat.id]){
+      html+=`<div style="font-size:11px;color:${day.color};opacity:.9;margin:-2px 14px 10px;display:flex;gap:6px;align-items:flex-start;line-height:1.4">
+        <span style="flex-shrink:0">⚖️</span><span>${_esc(_selectionReasons[cat.id])}</span></div>`;
+    }
 
     // Selected exercise cards
     cat.exercises.forEach(ex=>{
@@ -4085,6 +4344,18 @@ function buildCoachContext(){
       }
     }
   }
+
+  // 2b. PROGRAMMING BALANCE (fatigue/axial fundamentals) -----------
+  // So the coach reasons with the same sustainability model the app's
+  // auto-selection uses (Nippard SFR + King axial-load management).
+  lines.push('\n=== PROGRAMMING BALANCE ===');
+  lines.push('The app auto-balances each session: only ONE heavy-axial lift (squat OR hinge) per day, no redundant movement patterns, and it softens heavy barbell rows when the spine is recently taxed.');
+  try {
+    const legF = (typeof getLegFocus === 'function') ? getLegFocus() : null;
+    if(legF) lines.push('Next/current LEG day focus: ' + legF.toUpperCase() + (legF==='hinge' ? ' (heavy RDL + machine quad)' : ' (heavy front squat + light DB hinge)') + '. Leg days alternate quad↔hinge automatically.');
+    const ax = (typeof getRecentAxialLoad === 'function') ? getRecentAxialLoad(2) : null;
+    if(ax != null) lines.push('Recent spinal/axial load (last 2 real sessions): ' + ax + ' (≥3 = already taxed → bias toward lower-axial picks today).');
+  } catch(e){}
 
   // 3. ACTIVE SESSION ---------------------------------------------
   if(S && S.active){
