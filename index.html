@@ -1684,6 +1684,12 @@ function getPreviewAudio(){
     window._previewPlaying = false;
     if(typeof render === 'function') render();
   });
+  // When a real track's metadata loads (duration becomes known), re-render so
+  // the pause/play button enables — needed for the "shuffle without auto-play"
+  // path (external music playing) where no 'play' event fires.
+  const _reflectReady = () => { if(typeof render === 'function') render(); };
+  _previewAudio.addEventListener('loadedmetadata', _reflectReady);
+  _previewAudio.addEventListener('canplay', _reflectReady);
   return _previewAudio;
 }
 function stopPreview(){
@@ -2580,11 +2586,11 @@ function getActiveExercises(day){
 // SMART PROGRESSION (Nippard Inspired)
 // ══════════════════════════════════════════════════════════════════════
 function getInc(ex, aggressive){
-  // Isolation / small muscle - tiny increments
-  if(['laterals','lat_cable','ham_curl','front_raise','tri_kick',
+  // Isolation / small muscle - tiny increments (incl. pull-day laterals)
+  if(['laterals','lat_cable','lat_cab_p','lat_db_p','ham_curl','front_raise','tri_kick',
       'rev_fly','spider_curl','inc_curl'].includes(ex.id)) return 2.5;
-  // Calves and leg press - big jumps
-  if(['calves','calves_seat','leg_press'].includes(ex.id)) return aggressive?30:20;
+  // Calves and leg press - big jumps (incl. pull-day calf raise)
+  if(['calves','calves_seat','leg_press','calf_p'].includes(ex.id)) return aggressive?30:20;
   if(['calves_db'].includes(ex.id)) return 5;
   // Leg compounds
   if(['hack_sq','rdl','bb_squat','sldl','goblet_sq'].includes(ex.id)) return aggressive?15:10;
@@ -2811,11 +2817,49 @@ function countRecentFatigueSkips(days=14){
   }).length;
 }
 
+// Count distinct logged training sessions (week×1000+session with real sets).
+function getTotalLoggedSessions(){
+  const seen=new Set();
+  for(const exId of Object.keys(DB||{})){
+    if(!Array.isArray(DB[exId])) continue;
+    for(const e of DB[exId]){
+      if(e&&Array.isArray(e.sets)&&e.sets.length) seen.add((e.week||0)*1000+(e.session||0));
+    }
+  }
+  return seen.size;
+}
+// Count real (non-deload) sessions since the most recent deload session.
+// This is robust to the week counter, so deload timing works long-term even
+// if S.week isn't advancing. ~12 sessions ≈ 4 P/Pull/Legs rotations.
+function getSessionsSinceDeload(){
+  let lastDeloadScore=-1;
+  for(const exId of Object.keys(DB||{})){
+    if(!Array.isArray(DB[exId])) continue;
+    for(const e of DB[exId]){
+      if(e&&e.deload===true&&Array.isArray(e.sets)&&e.sets.length)
+        lastDeloadScore=Math.max(lastDeloadScore,(e.week||0)*1000+(e.session||0));
+    }
+  }
+  const since=new Set();
+  for(const exId of Object.keys(DB||{})){
+    if(!Array.isArray(DB[exId])) continue;
+    for(const e of DB[exId]){
+      if(!e||e.deload===true||!Array.isArray(e.sets)||!e.sets.length) continue;
+      const score=(e.week||0)*1000+(e.session||0);
+      if(score>lastDeloadScore) since.add(score);
+    }
+  }
+  return since.size;
+}
+
 function shouldRecommendDeload(){
   const weeksSinceLast = S.week - (S.deload.lastWeek||0);
   const baseInterval = 4;
   const adjusted = baseInterval + (S.deload.postponeCount||0);
   if(weeksSinceLast >= adjusted) return true;
+  // Session-based trigger — robust even when the week counter doesn't advance.
+  // 12 working sessions ≈ 4 weeks of training. Postpones extend it by 3 each.
+  if(getSessionsSinceDeload() >= 12 + (S.deload.postponeCount||0)*3) return true;
   // Early trigger: 2+ injury/recovery skips in last 14 days AND at least 2 weeks since last deload
   if(weeksSinceLast >= 2 && countRecentFatigueSkips(14) >= 2) return true;
   return false;
@@ -2827,6 +2871,10 @@ function deloadReason(){
   const adjusted = baseInterval + (S.deload.postponeCount||0);
   if(weeksSinceLast >= adjusted){
     return `You've pushed hard for ${weeksSinceLast} weeks. A deload week will help recovery and future gains.`;
+  }
+  const sinceDeload=getSessionsSinceDeload();
+  if(sinceDeload >= 12 + (S.deload.postponeCount||0)*3){
+    return `You've logged ${sinceDeload} hard sessions since your last deload. Time for a lighter week to recover and come back stronger.`;
   }
   const fatigueSkips=countRecentFatigueSkips(14);
   if(fatigueSkips>=2){
@@ -2850,6 +2898,7 @@ function postponeDeload(){
 function confirmDeloadDone(){
   S.deload.lastWeek = S.week;
   S.deload.postponeCount = 0;
+  S.deload.startCount = null;
   S.deloadActive = false;
   // Track this week as an actual deload for history/progression
   if(!DB.deloadWeeks) DB.deloadWeeks = [];
@@ -2861,6 +2910,10 @@ function confirmDeloadDone(){
 
 function startDeload(){
   S.deloadActive = true;
+  // Snapshot the session count so a forgotten deload auto-completes after a
+  // full rotation (see confirmSession), preventing it from silently tagging
+  // every future set as deload and freezing progression.
+  if(S.deload) S.deload.startCount = getTotalLoggedSessions();
   // Do NOT stamp DB.deloadWeeks here — only confirmDeloadDone() does that.
   // Individual sets logged during this flag are tagged deload:true at write
   // time, so the week stamp is only needed for history display, not logic.
@@ -2913,6 +2966,9 @@ function getSugNext(){
   if(!hasLogged){
     const last=getLastRealSession();
     if(!last)return{week:1,session:1};
+    // A completed REST day advances the week (rest logs no DB entry, so detect
+    // it via the last confirmed day type rather than the last logged session).
+    if(S.lastDayId==='rest')return{week:last.week+1,session:1};
     if(last.dayId==='rest')return{week:last.week+1,session:1};
     return{week:last.week,session:last.session+1};
   }
@@ -3190,14 +3246,21 @@ function confirmSet(){
 
   // Check whether this set completed the whole session. If so, big buzz.
   // Otherwise start the rest timer — duration matched to the lift type.
-  const totalSets = Object.keys(S.setData).length;
-  let neededSets = 0;
-  getDay().categories.forEach(c=>{
+  // Count only sets that belong to currently-SELECTED exercises (not the raw
+  // S.setData key count) so orphaned keys from a mid-session exercise swap
+  // can't trigger an early "session complete" and skip the rest timer.
+  let neededSets = 0, doneActive = 0;
+  const _day = getDay();
+  _day.categories.forEach(c=>{
+    const selIds = getSelectedForCat(c.id, _day);
     c.exercises.forEach(e=>{
-      if(getSelectedForCat(c.id, getDay()).includes(e.id)) neededSets += e.sets;
+      if(selIds.includes(e.id)){
+        neededSets += e.sets;
+        for(let i=0;i<e.sets;i++) if(S.setData[`${e.id}-${i}`]) doneActive++;
+      }
     });
   });
-  if(totalSets >= neededSets && neededSets > 0){
+  if(doneActive >= neededSets && neededSets > 0){
     buzz(HAPTIC_DONE);
   } else {
     startRestTimer(getRestForEx(exId), restTierLabel(exId));
@@ -3369,6 +3432,20 @@ function confirmSession(){
   // Do NOT clear sessionAdjustments here — they were set during the
   // pre-session coach flow and must remain active throughout this session.
   // They are cleared in openSessOverlay() when the NEXT session is opened.
+
+  // Safety net: auto-complete a forgotten deload. If the deload flag has been
+  // active across a full rotation (~3 sessions) without the user tapping
+  // "Mark Deload Complete", end it now so it can't keep tagging sets deload:true
+  // and freeze progression forever.
+  if(S.deloadActive && S.deload && S.deload.startCount != null &&
+     getTotalLoggedSessions() - S.deload.startCount >= 3){
+    S.deloadActive = false;
+    S.deload.lastWeek = S.week;
+    S.deload.postponeCount = 0;
+    S.deload.startCount = null;
+    if(!DB.deloadWeeks) DB.deloadWeeks = [];
+    if(!DB.deloadWeeks.includes(S.week)) DB.deloadWeeks.push(S.week);
+  }
 
   // Promote the session_tag (pump/light) from adjustments to a top-level
   // flag so confirmSet() can stamp it on every history entry. This lets
