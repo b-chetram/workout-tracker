@@ -685,6 +685,7 @@ const EXERCISE_DB = {
         {id:'pendlay',   name:'Pendlay Row',                sets:3, rep:'6 to 10', sw:155, unit:'lb',      equip:'barbell', prog:'Leave 1 to 2 RIR on sets 1 to 2, push last set to failure. Hit top of range 2 sessions → add 10 lb.'},
         {id:'cable_row', name:'Seated Cable Row',           sets:3, rep:'10 to 12',sw:150, unit:'lb cable',equip:'cable', prog:'Leave 1 to 2 RIR on sets 1 to 2, push last set to failure. Hit top of range 2 sessions → add 10 lb.'},
         {id:'db_row',    name:'Dumbbell Row (Single Arm)',   sets:3, rep:'8 to 12', sw:70,  unit:'lb DB',   equip:'dumbbell', prog:'Hit 3×12 → add 5 lb. Full stretch at bottom, pull to hip.'},
+        {id:'csr_db',    name:'Chest-Supported DB Row',      sets:3, rep:'8 to 12', sw:55,  unit:'lb DB',   equip:'dumbbell', prog:'Hit 3×12 → add 5 lb. Chest braced on an incline bench — zero lower-back load, pure lat and upper back. Let the DBs stretch the lats fully at the bottom.'},
       ]},
       { id:'pull_rear', name:'Rear Delt / Upper Back', min:1, max:1, exercises:[
         {id:'face_pull', name:'Face Pulls',                 sets:3, rep:'15 to 20',sw:55,  unit:'lb cable',equip:'cable', prog:'Add 5 lb every 2 to 3 weeks. Non negotiable for shoulder health.'},
@@ -858,6 +859,7 @@ const MUSCLE_META = {
   pendlay:    {primary:['lats','traps'],             secondary:['biceps'],                   mechanics:['horizontal_pull','compound','bilateral','spinal_loading']},
   cable_row:  {primary:['lats','traps'],             secondary:['biceps'],                   mechanics:['horizontal_pull','compound','bilateral']},
   db_row:     {primary:['lats','traps'],             secondary:['biceps'],                   mechanics:['horizontal_pull','compound','unilateral']},
+  csr_db:     {primary:['lats','traps'],             secondary:['biceps'],                   mechanics:['horizontal_pull','compound','bilateral']},
   face_pull:  {primary:['rear_delts','traps'],       secondary:[],                           mechanics:['horizontal_pull','isolation']},
   rev_fly:    {primary:['rear_delts'],               secondary:['traps'],                    mechanics:['fly','isolation']},
   band_pull:  {primary:['rear_delts','traps'],       secondary:[],                           mechanics:['horizontal_pull','isolation']},
@@ -931,6 +933,7 @@ const EX_LOAD = {
   pendlay:    {axial:2, pattern:'horiz_pull_free',sfr:'med'},
   cable_row:  {axial:0, pattern:'horiz_pull_sup', sfr:'high'},
   db_row:     {axial:1, pattern:'horiz_pull_sup', sfr:'high'},
+  csr_db:     {axial:0, pattern:'horiz_pull_sup', sfr:'high'},
   face_pull:  {axial:0, pattern:'rear_delt',      sfr:'high'},
   rev_fly:    {axial:0, pattern:'rear_delt',      sfr:'high'},
   band_pull:  {axial:0, pattern:'rear_delt',      sfr:'med'},
@@ -2599,7 +2602,7 @@ function getInc(ex, aggressive){
   // Hamstring isolation
   if(['leg_curl','leg_ext','nordic','db_leg_curl'].includes(ex.id)) return 5;
   // Back compounds - handle bigger jumps
-  if(['lat_pull','bar_row','cable_row','pendlay','db_row','sa_pull'].includes(ex.id)) return aggressive?15:10;
+  if(['lat_pull','bar_row','cable_row','pendlay','db_row','csr_db','sa_pull'].includes(ex.id)) return aggressive?15:10;
   // Main presses
   if(['ohp','cgbp'].includes(ex.id)) return aggressive?10:5;
   // Bodyweight - not applicable but return 5 as fallback
