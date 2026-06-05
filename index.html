@@ -1045,7 +1045,10 @@ function setTechnique(exId, t){
   if(!S.exTechnique) S.exTechnique={};
   S.exTechnique[exId] = t; // store explicitly (incl. 'standard') so it overrides sticky history
   save();
-  if(PU && PU.exId) openSetPopup(PU.exId, PU.setIdx); // refresh the open popup
+  const ov=document.getElementById('set-overlay');
+  const popupOpen = ov && !ov.classList.contains('hidden') && PU && PU.exId===exId;
+  if(popupOpen) openSetPopup(PU.exId, PU.setIdx);     // refresh the open popup
+  else if(typeof render==='function') render();        // applied from the card → refresh it
 }
 
 // Poliquin 4-digit tempo (eccentric-pauseBottom-concentric-pauseTop, seconds).
@@ -1057,6 +1060,49 @@ function getTempoCode(ex, tech){
 }
 // Back-off weight for top-set schemes: ~82% of the top set, rounded to 2.5.
 function backoffWeight(topW){ return Math.round(topW*0.82/2.5)*2.5; }
+
+// Is this lift stalled? Same top weight for the last 3 working sessions with
+// no rep improvement = a plateau (King's cue to change the stimulus).
+function getStallStatus(exId){
+  const h=getNonDeloadSessions(exId);
+  if(h.length<3) return false;
+  const last3=h.slice(-3);
+  const topW=s=>{const ws=(s.sets||[]).filter(x=>x&&x.weight).map(x=>x.weight);return ws.length?Math.max(...ws):0;};
+  const minReps=s=>{const r=(s.sets||[]).filter(x=>x&&x.reps).map(x=>x.reps);return r.length?Math.min(...r):0;};
+  const weights=last3.map(topW);
+  const sameW=weights.every(w=>Math.abs(w-weights[weights.length-1])<2.5);
+  const reps=last3.map(minReps);
+  const improving=reps[reps.length-1]>reps[0];
+  return sameW && !improving;
+}
+
+// Recommend a set scheme per exercise from King's principles + logged outcomes.
+// Conservative on fatigue: intensity techniques only when a lift is stalled,
+// top sets only on heavy main compounds, stretch-pause on loaded-stretch lifts,
+// everything else stays Standard. Returns {scheme, reason}.
+function getRecommendedScheme(ex){
+  const meta=getMeta(ex.id)||{}; const mech=meta.mechanics||[];
+  const isIso=mech.includes('isolation');
+  const isMain=!!ex._isMainCat;
+  const load=getLoad(ex.id);
+  const stretchFocus=!!_STRETCH_FOCUS[ex.id];
+
+  // 1. Plateau → fresh stimulus without just piling on load (Plateau Protocol).
+  if(getStallStatus(ex.id)){
+    if(isIso) return {scheme:'restpause', reason:`You've stalled here ~3 sessions. A rest-pause finisher adds intensity to break through without changing the weight.`};
+    return {scheme:'slow_ecc', reason:`You've stalled here ~3 sessions. A slow 5-sec eccentric is a fresh stimulus that breaks plateaus without adding load — King's go-to fix.`};
+  }
+  // 2. Heavy main compound → top set + back-off (strength stimulus + volume).
+  if(isMain && load.axial>=1){
+    return {scheme:'topback', reason:`Main compound: a heavy top set drives strength, then the back-off sets add growth volume — without grinding every set heavy.`};
+  }
+  // 3. Loaded-stretch movement → stretch-pause (where most growth happens).
+  if(stretchFocus){
+    return {scheme:'stretch_p', reason:`This lift loads the muscle in a deep stretch — a 2-sec pause there is the most growth-productive way to train it (King's signature).`};
+  }
+  // 4. Default: controlled-tempo straight sets — the reliable base.
+  return {scheme:'standard', reason:`Straight sets with a controlled tempo are your base here. Intensity techniques are best saved for stalls and end-of-muscle finishers.`};
+}
 
 // ══════════════════════════════════════════════════════════════════════
 // WEEKLY VOLUME TRACKING  (Israetel volume landmarks: MEV / MAV / MRV)
@@ -3217,16 +3263,31 @@ function openSetPopup(exId,setIdx){
     </div>`;
   }
 
-  // ── SET SCHEME selector + technique guidance (Poliquin/King) ──
+  // ── SET SCHEME: app recommendation + selector + guidance (Poliquin/King) ──
   const tech=getTechnique(exId);
   const tempoCode=getTempoCode(ex, tech);
   const isLastSet=setIdx===ex.sets-1;
   const topR=topRep(ex), botR=botRep(ex);
+  const rec=getRecommendedScheme(ex);
+  const onRec=tech===rec.scheme;
+
+  // Recommendation banner — surfaced but NOT auto-applied (you confirm).
+  let recHtml='';
+  if(!onRec){
+    recHtml=`<div class="nip-tip" style="margin-bottom:10px;border-color:#5ec46a45;background:#0d1e0d">
+      <div class="nip-lbl" style="color:#5ec46a">💡 Coach recommends · ${TECHNIQUES[rec.scheme].label}</div>
+      <div class="nip-txt">${_esc(rec.reason)}</div>
+      <button onclick="setTechnique('${exId}','${rec.scheme}')" style="margin-top:9px;border-radius:9px;padding:8px 15px;font-size:12px;font-weight:800;background:#5ec46a;color:#000;border:none;cursor:pointer;-webkit-tap-highlight-color:transparent">Apply ${TECHNIQUES[rec.scheme].label} →</button>
+    </div>`;
+  } else if(rec.scheme!=='standard'){
+    recHtml=`<div style="font-size:11px;color:#5ec46a;font-weight:700;margin:-2px 0 10px">✓ Following the coach recommendation · ${TECHNIQUES[rec.scheme].label}</div>`;
+  }
 
   let schemeHtml='<div style="display:flex;gap:5px;overflow-x:auto;margin:-2px 0 12px;padding-bottom:3px;-webkit-overflow-scrolling:touch">';
   for(const k of TECH_ORDER){
     const on=k===tech;
-    schemeHtml+=`<button onclick="setTechnique('${exId}','${k}')" style="flex:0 0 auto;border-radius:999px;padding:6px 11px;font-size:11px;font-weight:700;cursor:pointer;border:1px solid ${on?'#5ec46a':'#2a2a2a'};background:${on?'#13261a':'#161616'};color:${on?'#5ec46a':'#888'};-webkit-tap-highlight-color:transparent;white-space:nowrap">${TECHNIQUES[k].label}</button>`;
+    const isRec=k===rec.scheme;
+    schemeHtml+=`<button onclick="setTechnique('${exId}','${k}')" title="${isRec?'Recommended':''}" style="flex:0 0 auto;border-radius:999px;padding:6px 11px;font-size:11px;font-weight:700;cursor:pointer;border:1px solid ${on?'#5ec46a':(isRec?'#5ec46a55':'#2a2a2a')};background:${on?'#13261a':'#161616'};color:${on?'#5ec46a':'#888'};-webkit-tap-highlight-color:transparent;white-space:nowrap">${isRec?'⭐ ':''}${TECHNIQUES[k].label}</button>`;
   }
   schemeHtml+='</div>';
 
@@ -3255,7 +3316,7 @@ function openSetPopup(exId,setIdx){
     <div class="nip-lbl" style="color:#5ec46a">⏱ Execution · tempo ${tempoCode}</div>
     <div class="nip-txt">${_esc(cue.tempo)}. ${_esc(cue.stretch)}${_esc(cue.partial)}</div>
   </div>`;
-  document.getElementById('pu-nip-tip').innerHTML=schemeHtml+tipHtml+techGuideHtml+execHtml;
+  document.getElementById('pu-nip-tip').innerHTML=recHtml+schemeHtml+tipHtml+techGuideHtml+execHtml;
 
   document.getElementById('pu-weight').value=prefill||'';
   document.getElementById('pu-reps').value=alreadyDone&&current.reps?current.reps:'';
@@ -3931,6 +3992,16 @@ function render(){
       const isOpen=S.expandedEx===ex.id;
       const sug=getSug(ex);
       const last=getLastSess(ex.id);
+      // Set-scheme recommendation badge (King-driven; you confirm to apply)
+      const exRec=getRecommendedScheme(ex);
+      const exTech=getTechnique(ex.id);
+      let schemeBadge='';
+      if(exTech===exRec.scheme){
+        schemeBadge = exRec.scheme!=='standard'
+          ? `<div style="font-size:11px;color:#5ec46a;margin-top:9px;font-weight:700">⚙️ Scheme: ${TECHNIQUES[exRec.scheme].label}</div>` : '';
+      } else {
+        schemeBadge = `<button onclick="setTechnique('${ex.id}','${exRec.scheme}')" style="margin-top:9px;width:100%;text-align:left;border-radius:10px;padding:9px 12px;font-size:12px;font-weight:600;background:#0d1e0d;border:1px solid #5ec46a35;color:#5ec46a;cursor:pointer;-webkit-tap-highlight-color:transparent">💡 Coach: try <b>${TECHNIQUES[exRec.scheme].label}</b> — tap to apply</button>`;
+      }
       const altIdx=ex.alt?getAltIdx(ex):null;
       const altName=altIdx!==null?ex.alt[altIdx]:null;
       const lastAltName=(altIdx!==null&&last&&last.altIdx!==undefined)?ex.alt[last.altIdx]:null;
@@ -4041,6 +4112,7 @@ function render(){
             ${targetSub?`<div class="wval2">${targetSub}</div>`:''}
           </div>
         </div>
+        ${schemeBadge}
         ${altName?`<div class="alt-bar">
           <div class="alt-dot" style="background:${day.color}"></div>
           <div>
