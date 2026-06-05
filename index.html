@@ -1016,6 +1016,49 @@ function getExecCue(ex){
 }
 
 // ══════════════════════════════════════════════════════════════════════
+// SET SCHEMES / INTENSITY TECHNIQUES  (Poliquin/King-style)
+// ══════════════════════════════════════════════════════════════════════
+// A per-exercise scheme that changes tempo, the last-set technique, or the
+// whole set structure (top-set + back-off). The choice is sticky: it's
+// stamped on every logged entry, so it persists across sessions until
+// changed, and the progression algorithm reads it back to interpret the
+// logged sets correctly.
+const TECHNIQUES = {
+  standard:  {label:'Standard'},
+  slow_ecc:  {label:'Slow Eccentric'},
+  stretch_p: {label:'Stretch-Pause'},
+  restpause: {label:'Rest-Pause'},
+  dropset:   {label:'Drop Set'},
+  topback:   {label:'Top + Back-off'}
+};
+const TECH_ORDER = ['standard','slow_ecc','stretch_p','restpause','dropset','topback'];
+
+// Resolve the active scheme for an exercise: this-session override first,
+// then the most recent stamped scheme from history (sticky), else standard.
+function getTechnique(exId){
+  if(S.exTechnique && S.exTechnique[exId]) return S.exTechnique[exId];
+  const h=getHist(exId);
+  for(let i=h.length-1;i>=0;i--){ if(h[i] && h[i].technique) return h[i].technique; }
+  return 'standard';
+}
+function setTechnique(exId, t){
+  if(!S.exTechnique) S.exTechnique={};
+  S.exTechnique[exId] = t; // store explicitly (incl. 'standard') so it overrides sticky history
+  save();
+  if(PU && PU.exId) openSetPopup(PU.exId, PU.setIdx); // refresh the open popup
+}
+
+// Poliquin 4-digit tempo (eccentric-pauseBottom-concentric-pauseTop, seconds).
+function getTempoCode(ex, tech){
+  const meta=getMeta(ex.id)||{}; const isIso=(meta.mechanics||[]).includes('isolation');
+  if(tech==='slow_ecc')  return '5-0-1-0';
+  if(tech==='stretch_p') return '3-2-1-0';
+  return isIso ? '2-0-1-1' : '3-0-1-0';
+}
+// Back-off weight for top-set schemes: ~82% of the top set, rounded to 2.5.
+function backoffWeight(topW){ return Math.round(topW*0.82/2.5)*2.5; }
+
+// ══════════════════════════════════════════════════════════════════════
 // WEEKLY VOLUME TRACKING  (Israetel volume landmarks: MEV / MAV / MRV)
 // ══════════════════════════════════════════════════════════════════════
 // Counts hard sets per muscle across ONE full Push/Pull/Legs rotation (the
@@ -1938,6 +1981,7 @@ function _applyStoredData(r){
   if(!S.selectedEx)  S.selectedEx  = {};
   if(!S.deload)      S.deload      = {lastWeek:0, postponeCount:0};
   if(S.deloadActive === undefined) S.deloadActive = false;
+  if(!S.exTechnique) S.exTechnique = {};
   if(!S.sessionAdjustments) S.sessionAdjustments = {skipToday:[],selectToday:{}};
   if(!DB.skipped)    DB.skipped    = [];
   if(!DB.feedback)   DB.feedback   = {};
@@ -2627,6 +2671,28 @@ function getSug(ex){
   const top=topRep(ex);
   const threshold=blowoutThreshold(ex);
 
+  // ── TOP SET + BACK-OFF scheme ──
+  // If the last session used this scheme, evaluate progression on the TOP
+  // SET (set 0) only — the lighter back-off sets are intentional volume, NOT
+  // a weight drop. Progress the top weight when the top set beats its target.
+  if(last.technique==='topback'){
+    const setsF=(last.sets||[]).filter(Boolean);
+    const s0=setsF[0]||{};
+    const topW=s0.weight||ex.sw;
+    const topReps=s0.reps||0;
+    const tgt=botRep(ex);                 // top-set target = bottom of the range
+    const earned=topReps && topReps>tgt;  // beat the target → add weight
+    const nextTopW=earned ? topW+getInc(ex,false) : topW;
+    const boW=backoffWeight(nextTopW);
+    return {
+      txt: earned?`🔝 Top set → ${nextTopW} ${ex.unit}`:`🔝 ${nextTopW} ${ex.unit} top set`,
+      go: !!earned, val:nextTopW, backoff:boW, scheme:'topback', micro:false,
+      reason: earned
+        ? `Top set hit ${topReps} reps (target ${tgt}+). Add weight on the top set; back-offs ~${boW} ${ex.unit}.`
+        : `Top set: aim for ${tgt}+ reps at ${nextTopW} ${ex.unit}, then 2 back-offs at ~${boW}.`
+    };
+  }
+
   // ── Detect mid-session weight drops ──
   // If the user had to drop weight during the session, use the LOWER weight
   // as the true working weight. The heavier set was a miss, not a baseline.
@@ -2984,6 +3050,17 @@ function prefillW(exId,setIdx){
   const ex=findEx(exId);
   if(!ex)return 50;
 
+  // TOP SET + BACK-OFF: set 0 is the heavy top set, sets 1+ are the lighter
+  // back-offs. Short-circuits the mid-session "weight drop" logic below since
+  // the lighter back-off is intentional, not a missed weight.
+  if(getTechnique(exId)==='topback'){
+    const sug=getSug(ex);
+    const topW=sug.val;
+    const boW=sug.backoff||backoffWeight(topW);
+    const w=setIdx===0?topW:boW;
+    return isCurrentDeload()?deloadWeight(w):w;
+  }
+
   // Mid-session weight drop: if the previous set in THIS session fell below
   // the bottom of the rep range, the weight is too heavy. Pre-fill 10% less.
   if(setIdx>0){
@@ -3128,14 +3205,45 @@ function openSetPopup(exId,setIdx){
     </div>`;
   }
 
-  // Execution standard — always shown beneath the situational tip so every
-  // rep is loaded in the stretch with a controlled tempo (King's core point).
+  // ── SET SCHEME selector + technique guidance (Poliquin/King) ──
+  const tech=getTechnique(exId);
+  const tempoCode=getTempoCode(ex, tech);
+  const isLastSet=setIdx===ex.sets-1;
+  const topR=topRep(ex), botR=botRep(ex);
+
+  let schemeHtml='<div style="display:flex;gap:5px;overflow-x:auto;margin:-2px 0 12px;padding-bottom:3px;-webkit-overflow-scrolling:touch">';
+  for(const k of TECH_ORDER){
+    const on=k===tech;
+    schemeHtml+=`<button onclick="setTechnique('${exId}','${k}')" style="flex:0 0 auto;border-radius:999px;padding:6px 11px;font-size:11px;font-weight:700;cursor:pointer;border:1px solid ${on?'#5ec46a':'#2a2a2a'};background:${on?'#13261a':'#161616'};color:${on?'#5ec46a':'#888'};-webkit-tap-highlight-color:transparent;white-space:nowrap">${TECHNIQUES[k].label}</button>`;
+  }
+  schemeHtml+='</div>';
+
+  let techGuideHtml='';
+  if(tech==='topback'){
+    const sgb=getSug(ex);
+    const topW=sgb.val, boW=sgb.backoff||backoffWeight(topW);
+    if(setIdx===0){
+      techGuideHtml=`<div class="nip-tip" style="margin-bottom:14px;border-color:#e8a83840;background:#1a1408"><div class="nip-lbl" style="color:#e8a838">🔝 Top Set (heaviest)</div><div class="nip-txt">Aim for ${botR} to ${botR+2} reps at ${topW} ${ex.unit}, leaving ~1 RIR. Then drop to ~${boW} for your back-offs.</div></div>`;
+    } else {
+      techGuideHtml=`<div class="nip-tip" style="margin-bottom:14px"><div class="nip-lbl">⬇ Back-off Set</div><div class="nip-txt">~${boW} ${ex.unit} for ${topR} reps. Same weight both back-offs; push the final one to failure.</div></div>`;
+    }
+    tipHtml=''; // top/back guidance replaces the generic per-set target tip
+  } else if(tech==='restpause' && isLastSet){
+    techGuideHtml=`<div class="nip-tip" style="margin-bottom:14px;border-color:#e8a83840;background:#1a1408"><div class="nip-lbl" style="color:#e8a838">🔁 Rest-Pause</div><div class="nip-txt">Take this set to failure, rack it, rest 15 sec, then rep to failure again — 2 to 3 mini-bouts total. Log the reps from your FIRST bout only.</div></div>`;
+  } else if(tech==='dropset' && isLastSet){
+    const dw=Math.round((prefill||sug.val||0)*0.75/2.5)*2.5;
+    techGuideHtml=`<div class="nip-tip" style="margin-bottom:14px;border-color:#e8a83840;background:#1a1408"><div class="nip-lbl" style="color:#e8a838">📉 Drop Set</div><div class="nip-txt">At failure, immediately strip to ~${dw} ${ex.unit} and rep to failure (1 to 2 drops). Log your MAIN set reps, before the drop.</div></div>`;
+  } else if((tech==='restpause'||tech==='dropset') && !isLastSet){
+    techGuideHtml=`<div class="nip-tip" style="margin-bottom:14px"><div class="nip-lbl">💡 ${TECHNIQUES[tech].label}</div><div class="nip-txt">Applies to your LAST set. Treat this one as a normal straight set, 1 to 2 RIR.</div></div>`;
+  }
+
+  // Execution standard — controlled tempo + stretch on every rep (King's core).
   const cue=getExecCue(ex);
   const execHtml=`<div class="nip-tip" style="margin-bottom:14px;border-color:rgba(94,196,106,.18);background:rgba(94,196,106,.05)">
-    <div class="nip-lbl" style="color:#5ec46a">⏱ Execution · ${restTierLabel(ex.id)||'lift'}</div>
+    <div class="nip-lbl" style="color:#5ec46a">⏱ Execution · tempo ${tempoCode}</div>
     <div class="nip-txt">${_esc(cue.tempo)}. ${_esc(cue.stretch)}${_esc(cue.partial)}</div>
   </div>`;
-  document.getElementById('pu-nip-tip').innerHTML=tipHtml+execHtml;
+  document.getElementById('pu-nip-tip').innerHTML=schemeHtml+tipHtml+techGuideHtml+execHtml;
 
   document.getElementById('pu-weight').value=prefill||'';
   document.getElementById('pu-reps').value=alreadyDone&&current.reps?current.reps:'';
@@ -3209,10 +3317,12 @@ function confirmSet(){
     // Stamp the leg-day focus (quad/hinge) on legs entries so the next leg
     // session can alternate deterministically off real history.
     const nativeDay=getExNativeDay(exId);
+    const tech=getTechnique(exId);
     entry={week:S.week,session:S.session,day:nativeDay,date:todayStr(),
            altIdx:ex.alt?getAltIdx(ex):null,deload:isCurrentDeload()?true:false,
            intent:S.sessionTag||null,
            legFocus:(nativeDay==='legs' && (S.legFocus==='quad'||S.legFocus==='hinge'))?S.legFocus:null,
+           technique:(tech && tech!=='standard')?tech:null,
            sets:[]};
     DB[exId].push(entry);
   }
@@ -3432,6 +3542,9 @@ function confirmSession(){
   S.week=SESS.week;S.session=SESS.session;S.dayIdx=SESS.dayIdx;
   S.active=true;S.sessionDate=fullDate();S.lastDayId=DAYS[SESS.dayIdx].id;
   S.setData={};S.expandedEx=null;S.selectedEx={};
+  // Clear per-session scheme overrides; the sticky per-exercise scheme still
+  // persists via the technique stamp on each logged entry (getTechnique).
+  S.exTechnique={};
   // Do NOT clear sessionAdjustments here — they were set during the
   // pre-session coach flow and must remain active throughout this session.
   // They are cleared in openSessOverlay() when the NEXT session is opened.
@@ -4654,6 +4767,7 @@ function buildCoachContext(){
   lines.push('\n=== PROGRAMMING BALANCE & EXECUTION ===');
   lines.push('The app auto-balances each session: only ONE heavy-axial lift (squat OR hinge) per day, no redundant movement patterns, and it softens heavy barbell rows when the spine is recently taxed.');
   lines.push('Execution standards enforced in-app (Justin King style): controlled 2-3s eccentrics, pause + load the STRETCHED position, leave 1-2 RIR on early sets and only the last set near failure, and lengthened partials on isolations when full reps run out. The app alerts the user when reps cliff (a sign of going to failure too early or resting too little). Main presses/squats were shifted from 5-8 to 6-10 reps for sustainable hypertrophy. Reinforce these cues; flag when the logged data shows failure-on-every-set rep crashes.');
+  lines.push('SET SCHEMES available per exercise (Poliquin/King): Standard, Slow Eccentric, Stretch-Pause, Rest-Pause, Drop Set, and Top + Back-off (one heavy top set then ~82% back-offs — progression tracks the TOP set). The scheme is sticky per exercise and shown in the set logger. You may recommend a scheme for a given lift with rationale.');
   // Weekly volume vs landmarks — so the coach can spot under/over-trained muscles.
   try {
     const vr=(typeof getWeeklyVolumeReport==='function')?getWeeklyVolumeReport():[];
