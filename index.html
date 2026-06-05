@@ -2672,11 +2672,13 @@ function getSug(ex){
   const threshold=blowoutThreshold(ex);
 
   // ── TOP SET + BACK-OFF scheme ──
-  // If the last session used this scheme, evaluate progression on the TOP
-  // SET (set 0) only — the lighter back-off sets are intentional volume, NOT
-  // a weight drop. Progress the top weight when the top set beats its target.
-  if(last.technique==='topback'){
-    const setsF=(last.sets||[]).filter(Boolean);
+  // Fires on the user's CURRENT intent (so the suggestion and the prefill
+  // always agree). Progression is read off the TOP SET (set 0) of the most
+  // recent top-back session — the lighter back-offs are intentional volume,
+  // never a weight drop. Beating the top-set target adds weight to the top.
+  if(getTechnique(ex.id)==='topback'){
+    const tb=[...h].reverse().find(e=>e.technique==='topback' && (e.sets||[]).filter(Boolean).length) || last;
+    const setsF=(tb.sets||[]).filter(Boolean);
     const s0=setsF[0]||{};
     const topW=s0.weight||ex.sw;
     const topReps=s0.reps||0;
@@ -2701,7 +2703,14 @@ function getSug(ex){
   const hadWeightDrop=!allSameWeight && lastWeights.length>1;
 
   let lastW, workingSets;
-  if(hadWeightDrop){
+  if(last.technique==='topback'){
+    // User switched AWAY from top+back-off (current intent isn't topback, or
+    // the branch above didn't fire). Use the heavy TOP set as the reference so
+    // the intentional back-off weights aren't read as a failed weight drop.
+    const s0=(last.sets||[]).filter(Boolean)[0]||{};
+    lastW=s0.weight||ex.sw;
+    workingSets=[s0];
+  } else if(hadWeightDrop){
     // Use the weight from the final set (what they dropped to)
     lastW=lastWeights[lastWeights.length-1];
     // Only evaluate reps from sets at the working weight for progression
@@ -2742,7 +2751,10 @@ function getSug(ex){
   // ── CASE 0: Weight drop recovery ──
   // If user dropped weight last session, stay at the dropped weight.
   // They need to prove they can handle it for full sets before progressing.
-  if(hadWeightDrop){
+  // Skip the weight-drop case for a prior top+back-off session — its varied
+  // weights are intentional, and the guard above already set workingSets to
+  // the top set, so let the rep-based cases evaluate that instead.
+  if(hadWeightDrop && last.technique!=='topback'){
     const heavyW=Math.max(...lastWeights);
     return{txt:`${lastW} ${ex.unit}`,go:false,val:lastW,
       reason:`Last session you dropped from ${heavyW} to ${lastW}. Stay here and hit ${top} reps on all ${ex.sets} sets before going back up.`,
@@ -3344,8 +3356,13 @@ function confirmSet(){
   // Rep-cliff alert: if this set finished the exercise and reps cratered
   // from set 1 (a fatigue/effort-management tell), nudge the user toward
   // more rest or an easier opening set — King's effort-distribution point.
+  // Rep-cliff alert is suppressed for intensity schemes: a drop set / rest-pause
+  // last set or a top+back-off structure is SUPPOSED to show a big rep change,
+  // so it's not a fatigue-mismanagement signal there.
+  const _tech = getTechnique(exId);
+  const _cliffEligible = _tech==='standard' || _tech==='slow_ecc' || _tech==='stretch_p';
   const exDoneNow = Array.from({length:ex.sets},(_,i)=>S.setData[`${exId}-${i}`]).every(Boolean);
-  if(exDoneNow && ex.sets>=2 && !PU.editing){
+  if(exDoneNow && ex.sets>=2 && !PU.editing && _cliffEligible){
     const repsArr = Array.from({length:ex.sets},(_,i)=>{
       const sd=S.setData[`${exId}-${i}`]; return sd&&sd.reps?sd.reps:null;
     }).filter(v=>v!=null);
