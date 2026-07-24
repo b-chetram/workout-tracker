@@ -653,7 +653,7 @@ const EXERCISE_DB = {
         {id:'db_fly',    name:'Dumbbell Flyes',             sets:3, rep:'10 to 12',sw:30,  unit:'lb DB',   equip:'dumbbell', prog:'Hit 3×12 → add 2.5 lb. Big stretch at bottom, slight bend in elbows.'},
         {id:'pushup_w',  name:'Weighted Push Ups',          sets:3, rep:'12 to 15',sw:35,  unit:'lb plate',equip:'bodyweight', prog:'Hit 3×15 → add 10 lb plate. Full ROM, chest to floor.'},
       ]},
-      { id:'push_sidedelt', name:'Side Delts', min:2, max:2, exercises:[
+      { id:'push_sidedelt', name:'Side Delts', min:1, max:1, exercises:[
         {id:'laterals',  name:'Lateral Raises (DB)',        sets:3, rep:'12 to 20',sw:25,  unit:'lb DB',   equip:'dumbbell', prog:'Hit top of range → add 2.5 lb. Strict, slight forward lean, lead with the elbow.'},
         {id:'lat_cable', name:'Lateral Raises (Cable)',     sets:3, rep:'12 to 20',sw:20,  unit:'lb cable',equip:'cable', prog:'Hit top of range → add 2.5 lb. Cable behind the body for a loaded stretch at the bottom.'},
       ]},
@@ -724,7 +724,7 @@ const EXERCISE_DB = {
         {id:'rdl',       name:'Romanian Deadlift',          sets:3, rep:'8 to 10', sw:195, unit:'lb',      equip:'barbell', prog:'Hit 3×10 → add 10 lb. Feel hamstring stretch every rep.'},
         {id:'sldl',      name:'Stiff Leg Deadlift (DB)',    sets:3, rep:'10 to 12',sw:60,  unit:'lb DB',   equip:'dumbbell', prog:'Hit 3×12 → add 5 lb. Slight knee bend, deep stretch.'},
       ]},
-      { id:'legs_single', name:'Single Leg / Accessory', min:1, max:1, exercises:[
+      { id:'legs_single', name:'Single Leg / Accessory (optional)', min:0, max:1, exercises:[
         {id:'sl_press',  name:'Single Leg Press',           sets:3, rep:'10 each', sw:140, unit:'lb',      equip:'machine', prog:'Add 10 lb every 2 weeks. Fix imbalances.'},
         {id:'bss',       name:'Bulgarian Split Squat',      sets:3, rep:'8 to 10 each',sw:40,unit:'lb DB', equip:'dumbbell', prog:'Hit 3×10 → add 5 lb. Rear foot elevated, deep knee bend.'},
         {id:'lunges',    name:'Walking Lunges',             sets:3, rep:'12 each', sw:40,  unit:'lb DB',   equip:'dumbbell', prog:'Hit 3×12 → add 5 lb. Long stride, upright torso.'},
@@ -735,7 +735,7 @@ const EXERCISE_DB = {
         {id:'nordic',    name:'Nordic Curls (Assisted)',     sets:3, rep:'5 to 8',  sw:0,   unit:'BW',      equip:'bodyweight', prog:'Reduce assistance as you get stronger. Elite hamstring builder.'},
         {id:'db_leg_curl',name:'DB Leg Curl (Lying)',       sets:3, rep:'10 to 12',sw:25,  unit:'lb DB',   equip:'dumbbell', prog:'Hit 3×12 → add 5 lb. Squeeze DB between feet.'},
       ]},
-      { id:'legs_ext', name:'Quad Isolation', min:0, max:1, exercises:[
+      { id:'legs_ext', name:'Quad Isolation', min:1, max:1, exercises:[
         {id:'leg_ext',   name:'Leg Extension',              sets:3, rep:'12 to 15',sw:100, unit:'lb',      equip:'machine', prog:'Hit 3×15 → add 5 lb. 2 sec squeeze at top, slow negative.'},
       ]},
       { id:'legs_calf', name:'Calves', min:1, max:1, exercises:[
@@ -1075,6 +1075,18 @@ function getStallStatus(exId){
   const improving=reps[reps.length-1]>reps[0];
   return sameW && !improving;
 }
+// Average RIR across the last N working sessions — tells us whether a stall is
+// from lack of stimulus (RIR left) or from over-reaching (already at failure).
+function getRecentAvgRir(exId, n){
+  const h=getNonDeloadSessions(exId).slice(-(n||3));
+  let sum=0, cnt=0;
+  for(const e of h){
+    for(const s of (e.sets||[])){
+      if(s && s.rir!=null){ sum+=s.rir; cnt++; }
+    }
+  }
+  return cnt ? sum/cnt : null;
+}
 
 // Recommend a set scheme per exercise from King's principles + logged outcomes.
 // Conservative on fatigue: intensity techniques only when a lift is stalled,
@@ -1087,9 +1099,16 @@ function getRecommendedScheme(ex){
   const load=getLoad(ex.id);
   const stretchFocus=!!_STRETCH_FOCUS[ex.id];
 
-  // 1. Plateau → fresh stimulus without just piling on load (Plateau Protocol).
+  // 1. Plateau → the FIX depends on WHY it stalled.
   if(getStallStatus(ex.id)){
-    if(isIso) return {scheme:'restpause', reason:`You've stalled here ~3 sessions. A rest-pause finisher adds intensity to break through without changing the weight.`};
+    const avgRir=getRecentAvgRir(ex.id, 3);
+    // Already training to failure (little/no RIR) → the stall is a RECOVERY
+    // problem. Adding intensity techniques makes it worse. Back off instead.
+    if(avgRir!=null && avgRir < 1){
+      return {scheme:'standard', reason:`⚠️ You've stalled here AND you're taking every set to failure (avg ${avgRir.toFixed(1)} RIR). This is over-reaching, not lack of effort — leave 1-2 reps in reserve on your early sets, cut a set, and it'll start moving again. A deload may be due.`};
+    }
+    // Genuinely stalled with reps in reserve → needs more stimulus.
+    if(isIso) return {scheme:'restpause', reason:`You've stalled here ~3 sessions but you're leaving reps in reserve. A rest-pause finisher adds the intensity you're missing.`};
     return {scheme:'slow_ecc', reason:`You've stalled here ~3 sessions. A slow 5-sec eccentric is a fresh stimulus that breaks plateaus without adding load — King's go-to fix.`};
   }
   // 2. Heavy main compound → top set + back-off (strength stimulus + volume).
@@ -2464,28 +2483,30 @@ function smartBalancedPick(catId, cat, day, applySkip){
   const reason = txt => { if(txt) _selectionReasons[catId]=txt; };
   const bySfr = ids => ids.filter(avail).sort((a,b)=> SFR_RANK[getLoad(b).sfr]-SFR_RANK[getLoad(a).sfr]);
 
-  // ── LEG FOCUS: alternate heavy squat vs heavy hinge, never both ──
+  // ── LEG FOCUS: ONE heavy compound per day (quad OR hinge), never both.
+  //    The non-focus compound REStS this session — its muscle is covered by
+  //    the isolation slot (leg extension for quads, seated leg curl for hams).
+  //    Returns [] (dormant) for the resting compound so no second big lift is
+  //    forced; the user can still manually add it from the picker.
   if(day.id==='legs' && cat.id==='legs_hinge'){
     const focus=getLegFocus();
     if(focus==='hinge'){
       const pick=firstAvail(['rdl','sldl']);
-      if(pick){ reason(pick==='rdl'?'Hinge focus — heavy RDL is today’s main lift':null); return [pick]; }
+      if(pick){ reason('Hinge focus — this is today’s ONE heavy compound. Go hard here.'); return [pick]; }
     } else {
-      const pick=firstAvail(['sldl','rdl']);
-      if(pick){ reason(pick==='sldl'?'Lighter DB hinge — the squat already loads your spine today':null); return [pick]; }
+      reason('💤 Resting the hinge — quad focus today. Hamstrings are covered by your seated leg curl. Tap to add if you want it.');
+      return []; // dormant
     }
   }
   if(day.id==='legs' && cat.id==='legs_quad'){
     const focus=getLegFocus();
-    if(focus==='hinge'){
-      // Heavy hinge today → quad main = zero-axial machine, not a barbell squat
-      const pick=firstAvail(['hack_sq','leg_press','goblet_sq','bb_squat']);
-      if(pick){ reason((pick==='hack_sq'||pick==='leg_press')?'Machine quad — keeps spinal load off on RDL day':null); return [pick]; }
-    } else {
-      // Quad focus → squat pattern is the priority
+    if(focus==='quad'){
       const rot=getMainRotation(cat);
-      const pick=firstAvail([rot.recommended,'bb_squat','hack_sq','leg_press','goblet_sq']);
-      if(pick){ reason('Quad focus — squat pattern is today’s priority'); return [pick]; }
+      const pick=firstAvail([rot.recommended,'hack_sq','leg_press','bb_squat','goblet_sq']);
+      if(pick){ reason('Quad focus — this is today’s ONE heavy compound. Go hard here.'); return [pick]; }
+    } else {
+      reason('💤 Resting heavy squats — hinge focus today. Quads are covered by your leg extension. Tap to add if you want it.');
+      return []; // dormant
     }
   }
 
@@ -2499,51 +2520,35 @@ function smartBalancedPick(catId, cat, day, applySkip){
     }
   }
 
-  // ── PATTERN DE-DUP: don't pair the single-leg accessory with the SAME
-  //    movement pattern as the quad main (e.g. leg press + single-leg press) ──
+  // ── SINGLE-LEG is now an OPTIONAL extra (dormant by default) so leg day is
+  //    one heavy compound + isolations, not a second big lift. Tap to add. ──
   if(day.id==='legs' && cat.id==='legs_single'){
-    const quadSel=getSelectedForCat('legs_quad', day);
-    const quadPattern=quadSel.length ? getLoad(quadSel[0]).pattern : null;
-    const ranked=bySfr(cat.exercises.map(e=>e.id));
-    const nonRedundant=ranked.filter(id=> getLoad(id).pattern!==quadPattern);
-    const pick=nonRedundant[0] || ranked[0];
-    if(pick){
-      if(nonRedundant[0] && quadPattern==='squat_machine' && getLoad(pick).pattern==='lunge')
-        reason('Split-squat — avoids doubling up on the leg-press pattern');
-      return [pick];
-    }
+    reason('Optional extra — add a single-leg movement here only if you’ve got gas left after your main lift.');
+    return []; // dormant
   }
 
   return null; // no special handling → original logic runs
 }
 
 function getMainRotation(cat){
-  let mostRecent = null;
-  let mostRecentTime = -1;
+  // Recommend the LEAST-recently-used exercise (never-used first, then oldest).
+  // The old "next index after most-recent" logic re-suggested a lift you'd just
+  // done whenever history was uneven, and never cycled in newly-added options.
+  // LRU guarantees maximum variety and never repeats a recent main.
+  let recId=null, recTime=Infinity;          // lowest timestamp = least recent
+  let mostRecentId=null, mostRecentTime=-1;   // for lastUsedName display
   cat.exercises.forEach(ex => {
     const hist = getHist(ex.id);
-    if(hist.length){
-      const last = hist[hist.length-1];
-      // Compare by week*100+session to get a sortable number
-      const t = (last.week||0)*100 + (last.session||0);
-      if(t > mostRecentTime){
-        mostRecentTime = t;
-        mostRecent = ex.id;
-      }
-    }
+    const last = hist.length ? hist[hist.length-1] : null;
+    const t = last ? ((last.week||0)*100 + (last.session||0)) : -1; // -1 = never used
+    if(t < recTime){ recTime = t; recId = ex.id; }
+    if(t > mostRecentTime){ mostRecentTime = t; mostRecentId = ex.id; }
   });
-  if(!mostRecent){
-    // No history at all, pick the first one
-    return {recommended: cat.exercises[0].id, lastUsed: null, lastUsedName: null};
-  }
-  // Find the index of the last used exercise and rotate to the next one
-  const lastIdx = cat.exercises.findIndex(e=>e.id===mostRecent);
-  const nextIdx = (lastIdx + 1) % cat.exercises.length;
-  const lastEx = cat.exercises[lastIdx];
+  const lastEx = mostRecentTime >= 0 ? cat.exercises.find(e=>e.id===mostRecentId) : null;
   return {
-    recommended: cat.exercises[nextIdx].id,
-    lastUsed: mostRecent,
-    lastUsedName: lastEx.name
+    recommended: recId || cat.exercises[0].id,
+    lastUsed: lastEx ? mostRecentId : null,
+    lastUsedName: lastEx ? lastEx.name : null
   };
 }
 
@@ -2595,7 +2600,9 @@ function getSelectedForCat(catId, day){
   // for categories it doesn't manage, falling through to the original
   // rotation/history logic below. Records a "why" for the session card.
   const smart = smartBalancedPick(catId, cat, day, applySkip);
-  if(smart && smart.length) return smart;
+  // null = fall through to rotation/history; an array (incl. empty []) = the
+  // engine's decision, including a deliberately-dormant leg compound.
+  if(smart) return smart;
 
   // For main categories: auto-rotate to a different exercise each session
   if(cat.isMain){
@@ -3255,12 +3262,21 @@ function openSetPopup(exId,setIdx){
     </div>`;
   }
 
-  // Priority 4: Early set RIR guidance
+  // Priority 4: Early set RIR guidance — stronger if this lift is chronically
+  // trained to failure (a recovery/progress killer we see across your log).
   if(!tipHtml && setIdx<ex.sets-1 && !alreadyDone){
-    tipHtml=`<div class="nip-tip" style="margin-bottom:14px">
-      <div class="nip-lbl">💡 Sets ${setIdx+1} of ${ex.sets}</div>
-      <div class="nip-txt">Leave 1 to 2 reps in reserve. Save failure for the last set.</div>
-    </div>`;
+    const recentRir=getRecentAvgRir(ex.id, 3);
+    if(recentRir!=null && recentRir < 0.7){
+      tipHtml=`<div class="nip-tip" style="margin-bottom:14px;border-color:#e0707040;background:#1a0d0d">
+        <div class="nip-lbl" style="color:#e07070">⚠️ Back off this set</div>
+        <div class="nip-txt">You've been taking ${ex.name} to failure on nearly every set. Stop this one ~2 reps short — chronic failure on early sets stalls recovery and progress. Save the all-out effort for your last set.</div>
+      </div>`;
+    } else {
+      tipHtml=`<div class="nip-tip" style="margin-bottom:14px">
+        <div class="nip-lbl">💡 Sets ${setIdx+1} of ${ex.sets}</div>
+        <div class="nip-txt">Leave 1 to 2 reps in reserve. Save failure for the last set.</div>
+      </div>`;
+    }
   }
 
   // ── SET SCHEME: app recommendation + selector + guidance (Poliquin/King) ──
@@ -3955,9 +3971,13 @@ function render(){
     // Category header (limits respect AI overrides)
     const catLim = getCatLimits(cat);
     const overridden = !!getCatOverride(cat);
+    // A leg compound the focus is resting today (engine returned []) shows as
+    // "Resting" instead of a misleading "Pick 1 ⭐".
+    const isDormant = sel.length===0 && (cat.id==='legs_quad'||cat.id==='legs_hinge'||cat.id==='legs_single') && day.id==='legs';
+    const reqLabel = isDormant ? '💤 Resting today' : `Pick ${catLim.min}${catLim.max>catLim.min?' to '+catLim.max:''}`;
     html+=`<div class="cat-header">
-      <div class="cat-name" style="color:${day.color}">${cat.name}${cat.isMain?' ⭐':''}${overridden?' <span title="Adjusted by AI Coach" style="color:#e8a838;font-size:11px">🤖</span>':''}</div>
-      <div class="cat-req">Pick ${catLim.min}${catLim.max>catLim.min?' to '+catLim.max:''}</div>
+      <div class="cat-name" style="color:${isDormant?'rgba(255,255,255,.28)':day.color}">${cat.name}${(cat.isMain&&!isDormant)?' ⭐':''}${overridden?' <span title="Adjusted by AI Coach" style="color:#e8a838;font-size:11px">🤖</span>':''}</div>
+      <div class="cat-req">${reqLabel}</div>
     </div>`;
 
     // Exercise picker (boosted exercises sort first, get a 🤖 badge)
