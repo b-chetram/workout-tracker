@@ -1966,9 +1966,11 @@ function renderMiniPlayer(el,song){
   applyArt(el,song.n,song.a);
 }
 
-// Build DAYS array from EXERCISE_DB
+// Build DAYS array from EXERCISE_DB. Rest days removed — the rotation is a
+// continuous push → pull → legs cycle (take rest days whenever you need them,
+// they're just not scheduled or recommended by the app).
 const DAYS = [
-  buildDay('push'), buildDay('pull'), buildDay('legs'), REST_DAY
+  buildDay('push'), buildDay('pull'), buildDay('legs')
 ];
 
 function buildDay(key){
@@ -1988,7 +1990,7 @@ function buildDay(key){
   return {id:key, label:d.label, sub:d.sub, color:d.color, categories:d.categories, exercises:allEx};
 }
 
-const DAY_SEQ=['push','pull','legs','rest'];
+const DAY_SEQ=['push','pull','legs'];
 const HERO_VIDEOS=[
   'https://assets.mixkit.co/active_storage/video_items/100543/1725384976/100543-video-360.mp4',
   'https://assets.mixkit.co/active_storage/video_items/100540/1725384803/100540-video-360.mp4',
@@ -2053,6 +2055,10 @@ function _applyStoredData(r){
   if(!S.deload)      S.deload      = {lastWeek:0, postponeCount:0};
   if(S.deloadActive === undefined) S.deloadActive = false;
   if(!S.exTechnique) S.exTechnique = {};
+  // Rest day removed: clamp a stale rest-day index (or any out-of-range dayIdx)
+  // and a leftover lastDayId:'rest' back into the push/pull/legs range.
+  if(!(S.dayIdx>=0 && S.dayIdx<DAYS.length)) S.dayIdx = 0;
+  if(S.lastDayId==='rest') S.lastDayId = 'legs';
   if(!S.sessionAdjustments) S.sessionAdjustments = {skipToday:[],selectToday:{}};
   if(!DB.skipped)    DB.skipped    = [];
   if(!DB.feedback)   DB.feedback   = {};
@@ -3103,11 +3109,18 @@ function deloadWeight(val){return Math.round(val*0.6/2.5)*2.5;}
 // NAVIGATION & RECOMMENDATIONS
 // ══════════════════════════════════════════════════════════════════════
 function getRecDayIdx(){
-  if(!S.lastDayId)return 1;
-  const li=DAY_SEQ.indexOf(S.lastDayId);
-  if(li===-1)return 0;
-  const nextId=DAY_SEQ[(li+1)%DAY_SEQ.length];
-  return DAYS.findIndex(d=>d.id===nextId);
+  // Recommend the next day in the push→pull→legs cycle based on the MOST
+  // RECENT LOGGED session — not a rigid internal counter. This stays correct
+  // even if you train a day out of order: it always follows whatever you
+  // actually did last. Falls back to the last started day, then push.
+  let lastDay=null;
+  const last=getLastRealSession();
+  if(last && last.dayId) lastDay=last.dayId;
+  else if(S.lastDayId) lastDay=S.lastDayId;
+  const i=DAY_SEQ.indexOf(lastDay);
+  const nextId = i>=0 ? DAY_SEQ[(i+1)%DAY_SEQ.length] : 'push';
+  const idx=DAYS.findIndex(d=>d.id===nextId);
+  return idx>=0 ? idx : 0;
 }
 // Find the most recently LOGGED session across all exercises in DB.
 // Returns {week, session, dayId} or null if no history exists.
@@ -3141,14 +3154,13 @@ function getSugNext(){
   if(!hasLogged){
     const last=getLastRealSession();
     if(!last)return{week:1,session:1};
-    // A completed REST day advances the week (rest logs no DB entry, so detect
-    // it via the last confirmed day type rather than the last logged session).
-    if(S.lastDayId==='rest')return{week:last.week+1,session:1};
-    if(last.dayId==='rest')return{week:last.week+1,session:1};
+    // Legs is the last day of the push→pull→legs cycle — finishing it starts a
+    // new "week" (one rotation) with the session counter reset to 1.
+    if(last.dayId==='legs')return{week:last.week+1,session:1};
     return{week:last.week,session:last.session+1};
   }
   // Normal advance from a real completed session
-  if(S.lastDayId==='rest')return{week:S.week+1,session:1};
+  if(S.lastDayId==='legs')return{week:S.week+1,session:1};
   return{week:S.week,session:S.session+1};
 }
 
