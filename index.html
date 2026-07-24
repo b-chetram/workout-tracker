@@ -1037,8 +1037,14 @@ const TECH_ORDER = ['standard','slow_ecc','stretch_p','restpause','dropset','top
 // then the most recent stamped scheme from history (sticky), else standard.
 function getTechnique(exId){
   if(S.exTechnique && S.exTechnique[exId]) return S.exTechnique[exId];
+  // Read the MOST RECENT logged session's scheme. A null/absent stamp means
+  // that session was Standard — so DON'T fall back past it to an older
+  // top-back (which used to leave a lift stuck reading as top-back forever).
   const h=getHist(exId);
-  for(let i=h.length-1;i>=0;i--){ if(h[i] && h[i].technique) return h[i].technique; }
+  for(let i=h.length-1;i>=0;i--){
+    const e=h[i];
+    if(e && Array.isArray(e.sets) && e.sets.length) return e.technique || 'standard';
+  }
   return 'standard';
 }
 function setTechnique(exId, t){
@@ -2482,6 +2488,18 @@ function smartBalancedPick(catId, cat, day, applySkip){
   const firstAvail = ids => { for(const id of ids){ if(id && avail(id)) return id; } return null; };
   const reason = txt => { if(txt) _selectionReasons[catId]=txt; };
   const bySfr = ids => ids.filter(avail).sort((a,b)=> SFR_RANK[getLoad(b).sfr]-SFR_RANK[getLoad(a).sfr]);
+  // Least-recently-used among a fixed id list (never-used first, then oldest).
+  const lruOf = ids => ids.slice().map(id=>{
+    const hh=getHist(id); const l=hh.length?hh[hh.length-1]:null;
+    return {id, t: l ? ((l.week||0)*100+(l.session||0)) : -1};
+  }).sort((a,b)=>a.t-b.t).map(x=>x.id);
+
+  // ── PUSH SHOULDER PRESS is now OPTIONAL (dormant by default) so a push day
+  //    defaults to ONE lateral movement, not lateral + Arnold. Tap to add. ──
+  if(day.id==='push' && cat.id==='push_shoulder'){
+    reason('Optional shoulder press — add Arnold / front raise only if your delts have gas left after your laterals.');
+    return []; // dormant
+  }
 
   // ── LEG FOCUS: ONE heavy compound per day (quad OR hinge), never both.
   //    The non-focus compound REStS this session — its muscle is covered by
@@ -2501,8 +2519,11 @@ function smartBalancedPick(catId, cat, day, applySkip){
   if(day.id==='legs' && cat.id==='legs_quad'){
     const focus=getLegFocus();
     if(focus==='quad'){
-      const rot=getMainRotation(cat);
-      const pick=firstAvail([rot.recommended,'hack_sq','leg_press','bb_squat','goblet_sq']);
+      // Rotate the ONE heavy compound among the genuinely heavy options only.
+      // Goblet Squat is a light movement — never the day's heavy lift (fallback
+      // only if the others are somehow unavailable).
+      const heavy=lruOf(['hack_sq','bb_squat','leg_press']);
+      const pick=firstAvail([...heavy,'goblet_sq']);
       if(pick){ reason('Quad focus — this is today’s ONE heavy compound. Go hard here.'); return [pick]; }
     } else {
       reason('💤 Resting heavy squats — hinge focus today. Quads are covered by your leg extension. Tap to add if you want it.');
@@ -2755,14 +2776,20 @@ function getSug(ex){
   const allSameWeight=lastWeights.length>0&&lastWeights.every(w=>w===lastWeights[0]);
   const hadWeightDrop=!allSameWeight && lastWeights.length>1;
 
+  // A heavy first set that HIT its target (>= bottom of range), followed by
+  // lighter sets, is an intentional top-set + back-off — NOT a failed drop —
+  // even if the top-back scheme wasn't formally applied. Progress off the top set.
+  const s0all=(last.sets||[]).filter(Boolean)[0]||{};
+  const botR=botRep(ex);
+  const topSetPattern = hadWeightDrop && s0all.reps && s0all.reps>=botR &&
+                        s0all.weight===Math.max(...lastWeights);
+
   let lastW, workingSets;
-  if(last.technique==='topback'){
-    // User switched AWAY from top+back-off (current intent isn't topback, or
-    // the branch above didn't fire). Use the heavy TOP set as the reference so
-    // the intentional back-off weights aren't read as a failed weight drop.
-    const s0=(last.sets||[]).filter(Boolean)[0]||{};
-    lastW=s0.weight||ex.sw;
-    workingSets=[s0];
+  if(last.technique==='topback' || topSetPattern){
+    // Use the heavy TOP set as the reference so the intentional back-off
+    // weights aren't read as a failed weight drop.
+    lastW=s0all.weight||ex.sw;
+    workingSets=[s0all];
   } else if(hadWeightDrop){
     // Use the weight from the final set (what they dropped to)
     lastW=lastWeights[lastWeights.length-1];
@@ -2807,7 +2834,7 @@ function getSug(ex){
   // Skip the weight-drop case for a prior top+back-off session — its varied
   // weights are intentional, and the guard above already set workingSets to
   // the top set, so let the rep-based cases evaluate that instead.
-  if(hadWeightDrop && last.technique!=='topback'){
+  if(hadWeightDrop && last.technique!=='topback' && !topSetPattern){
     const heavyW=Math.max(...lastWeights);
     return{txt:`${lastW} ${ex.unit}`,go:false,val:lastW,
       reason:`Last session you dropped from ${heavyW} to ${lastW}. Stay here and hit ${top} reps on all ${ex.sets} sets before going back up.`,
@@ -2859,6 +2886,20 @@ function getSug(ex){
     return{txt:`📈 Go up → ${newW} ${ex.unit}`,go:true,val:newW,
       reason:`Hit ${top}+ reps on all sets last time${rirNote}. Time to add weight.`,
       micro:false};
+  }
+
+  // ── OVER-REACH GUARD ──
+  // Stalled AND grinding every set to failure (low RIR) with reps below the
+  // top → the fix is RECOVERY, not more reps. Don't tell them to beat their
+  // reps (that contradicts the coach's back-off recommendation). Hold and
+  // leave reps in reserve. Fires before the micro-progression case.
+  if(lMin>0 && lMin<top){
+    const avgRirAll=getRecentAvgRir(ex.id,3);
+    if(avgRirAll!=null && avgRirAll<1 && getStallStatus(ex.id)){
+      return{txt:`${lastW} ${ex.unit}`,go:false,val:lastW,
+        reason:`⚠️ Stalled here AND taking every set to failure. That's over-reaching, not lack of effort — hold ${lastW}, leave 1-2 reps in reserve on your early sets, and cut a set. It'll move again once you recover.`,
+        micro:false};
+    }
   }
 
   // CASE 4: Stall detection (same weight, no rep improvement for 3+ sessions)
@@ -3973,7 +4014,9 @@ function render(){
     const overridden = !!getCatOverride(cat);
     // A leg compound the focus is resting today (engine returned []) shows as
     // "Resting" instead of a misleading "Pick 1 ⭐".
-    const isDormant = sel.length===0 && (cat.id==='legs_quad'||cat.id==='legs_hinge'||cat.id==='legs_single') && day.id==='legs';
+    const isDormant = sel.length===0 && (
+      (day.id==='legs' && (cat.id==='legs_quad'||cat.id==='legs_hinge'||cat.id==='legs_single')) ||
+      (day.id==='push' && cat.id==='push_shoulder'));
     const reqLabel = isDormant ? '💤 Resting today' : `Pick ${catLim.min}${catLim.max>catLim.min?' to '+catLim.max:''}`;
     html+=`<div class="cat-header">
       <div class="cat-name" style="color:${isDormant?'rgba(255,255,255,.28)':day.color}">${cat.name}${(cat.isMain&&!isDormant)?' ⭐':''}${overridden?' <span title="Adjusted by AI Coach" style="color:#e8a838;font-size:11px">🤖</span>':''}</div>
