@@ -645,8 +645,6 @@ const EXERCISE_DB = {
         {id:'mach_sh_press',name:'Seated Machine Shoulder Press',sets:3,rep:'8 to 12',sw:70, unit:'lb',     equip:'machine', prog:'Back flat on the pad, press to just short of lockout. Hit top of range → add weight.'},
       ]},
       { id:'push_chest', name:'Chest Accessory', min:1, max:2, exercises:[
-        {id:'dips',      name:'Dips (Weighted)',            sets:3, rep:'8 to 12', sw:35,  unit:'lb plate', equip:'bodyweight', prog:'Hit 3×12 → add 5 lb. Lean forward for chest emphasis, upright for triceps.'},
-        {id:'dips_bw',   name:'Dips (Bodyweight)',          sets:3, rep:'10 to 15',sw:0,   unit:'BW',      equip:'bodyweight', prog:'Hit 3×15 → add a plate. Full depth, controlled negative.'},
         {id:'cable_fly', name:'Cable Flyes',                sets:3, rep:'12 to 15',sw:30,  unit:'lb cable',equip:'cable', prog:'Hit 3×15 → add 5 lb. Squeeze at center, 2 sec negative.'},
         {id:'db_fly',    name:'Dumbbell Flyes',             sets:3, rep:'10 to 12',sw:30,  unit:'lb DB',   equip:'dumbbell', prog:'Hit 3×12 → add 2.5 lb. Big stretch at bottom, slight bend in elbows.'},
         {id:'pec_deck',  name:'Pec Deck (Machine Fly)',     sets:3, rep:'12 to 15',sw:90,  unit:'lb',      equip:'machine', prog:'Let the arms open into a full stretch, squeeze hard at the center. Hit 3×15 → add weight.'},
@@ -872,8 +870,6 @@ const MUSCLE_META = {
   // ── PUSH ──────────────────────────────────────────────────────────
   ohp:        {primary:['shoulders','triceps'],    secondary:['upper_chest','core'],       mechanics:['vertical_push','compound','bilateral','overhead']},
   db_bench:   {primary:['chest'],                   secondary:['triceps','shoulders'],      mechanics:['horizontal_push','compound','bilateral']},
-  dips:       {primary:['chest'],                   secondary:['triceps','shoulders'],      mechanics:['horizontal_push','compound','bilateral','bodyweight']},
-  dips_bw:    {primary:['chest'],                   secondary:['triceps','shoulders'],      mechanics:['horizontal_push','compound','bilateral','bodyweight']},
   cable_fly:  {primary:['chest'],                   secondary:['shoulders'],                mechanics:['horizontal_push','fly','isolation']},
   db_fly:     {primary:['chest'],                   secondary:['shoulders'],                mechanics:['horizontal_push','fly','isolation']},
   inc_db_press:{primary:['upper_chest','chest'],    secondary:['triceps','shoulders'],      mechanics:['horizontal_push','compound','bilateral']},
@@ -1049,8 +1045,6 @@ const EX_LOAD = {
   inc_mach_press:{axial:0, pattern:'horiz_push',  sfr:'high'},
   smith_inc:  {axial:0, pattern:'horiz_push',     sfr:'high'},
   mach_sh_press:{axial:0, pattern:'vert_push',    sfr:'high'},
-  dips:       {axial:0, pattern:'dip',            sfr:'high'},
-  dips_bw:    {axial:0, pattern:'dip',            sfr:'high'},
   cable_fly:  {axial:0, pattern:'fly',            sfr:'high'},
   db_fly:     {axial:0, pattern:'fly',            sfr:'med'},
   pec_deck:   {axial:0, pattern:'fly',            sfr:'high'},
@@ -1104,7 +1098,7 @@ const _STRETCH_FOCUS = {
   leg_curl:1, leg_ext:1, hip_add:1,
   inc_curl:1, spider_curl:1, preacher:1, mach_preacher:1, bayes_curl:1,
   db_fly:1, cable_fly:1, pec_deck:1, lth_fly:1, inc_db_press:1,
-  dips:1, dips_bw:1, tri_oh:1, skull:1,
+  tri_oh:1, skull:1,
   laterals:1, lat_cable:1, sa_pull:1, db_row:1, lat_pull:1, neutral_pull:1, iso_pull:1,
   tbar_row:1, sa_cable_row:1, straight_pull:1, cable_pullover:1
 };
@@ -2672,7 +2666,7 @@ function stickyPick(ids, count, avail, catId){
     if(keep.length>=count) break;
     if(getStallStatus(id))       { out.rotated.push({id, why:'stall'});  continue; }
     if(streak(id)>=ROTATE_AFTER) { out.rotated.push({id, why:'streak'}); continue; }
-    // Don't keep two of the same pattern (e.g. two dip variants) if a
+    // Don't keep two of the same pattern (e.g. two curl variants) if a
     // different-pattern option exists.
     if(keep.some(k=>pat(k)===pat(id)) &&
        cand.some(c=>c!==id && !keep.includes(c) && pat(c)!==pat(id))) continue;
