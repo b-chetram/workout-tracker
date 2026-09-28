@@ -1174,8 +1174,17 @@ function backoffWeight(topW){ return Math.round(topW*0.82/2.5)*2.5; }
 // Is this lift stalled? Same top weight for the last 3 working sessions with
 // no rep improvement = a plateau (King's cue to change the stimulus).
 function getStallStatus(exId){
-  const h=getNonDeloadSessions(exId);
+  let h=getNonDeloadSessions(exId);
   if(h.length<3) return false;
+  // Only compare sessions done at a similar point in the workout — a lift
+  // done last after a long session isn't a plateau, it's fatigue.
+  const stamped=h.filter(e=>e.preSets!=null);
+  if(stamped.length>=3){
+    const base=stamped[stamped.length-1].preSets;
+    const comp=stamped.filter(e=>Math.abs(e.preSets-base)<=FATIGUE_BAND);
+    if(comp.length<3) return false;
+    h=comp;
+  }
   const last3=h.slice(-3);
   const topW=s=>{const ws=(s.sets||[]).filter(x=>x&&x.weight).map(x=>x.weight);return ws.length?Math.max(...ws):0;};
   const minReps=s=>{const r=(s.sets||[]).filter(x=>x&&x.reps).map(x=>x.reps);return r.length?Math.min(...r):0;};
@@ -2620,15 +2629,14 @@ function recentAxial(){
 }
 
 // ══════════════════════════════════════════════════════════════════════
-// STICKY ROTATION  (stick while progressing, rotate on stall)
+// EXERCISE ROTATION  (cycle through your options, least-recently-used first)
 // ══════════════════════════════════════════════════════════════════════
-// Each slot keeps the exercise(s) you did last time while they're still
-// progressing, so you can actually add weight. A slot rotates when its lift
-// stalls (same weight, no rep gain for 3 sessions) or after ROTATE_AFTER
-// sessions in a row. On rotation it picks the least-recently-used option —
-// never-used exercises (new equipment) first — avoiding duplicate movement
-// patterns in multi-pick slots.
-const ROTATE_AFTER = 6;
+// Every slot — main compounds included — rotates each session instead of
+// repeating what you did last time. The next pick is the option you have
+// gone longest without doing (never-used equipment first), so a leg day
+// cycles front squat → leg press → pendulum → hack squat rather than
+// hammering one lift. Progression still works because each exercise keeps
+// its own weight history; you just come back to it on a longer cadence.
 
 // Chronological list of past sessions in which any of `ids` was logged,
 // with the set of ids used in each. The in-progress session is excluded so
@@ -2648,67 +2656,56 @@ function _slotHistory(ids){
   return [...map.values()].sort((a,b)=>a.key-b.key);
 }
 
-// Returns {picks, current, rotated:[{id,why}], fresh:[ids never done before]}
-function stickyPick(ids, count, avail, catId){
-  const out={picks:[], current:[], rotated:[], fresh:[]};
+// Returns {picks, last, fresh:[ids never done before]}
+function rotatePick(ids, count, avail, catId){
+  const out={picks:[], last:[], fresh:[]};
   if(count<=0) return out;
   const cand=ids.filter(avail);
   if(!cand.length) return out;
   const hist=_slotHistory(ids);
   const lastUse=id=>{ for(let i=hist.length-1;i>=0;i--) if(hist[i].used.has(id)) return hist[i].key; return -1; };
-  const streak=id=>{ let n=0; for(let i=hist.length-1;i>=0;i--){ if(hist[i].used.has(id)) n++; else break; } return n; };
   const pat=id=>getLoad(id).pattern;
   const boosted=id=>(catId && isExBoosted(catId,id)) ? 1 : 0;
 
-  out.current = hist.length ? cand.filter(id=>hist[hist.length-1].used.has(id)) : [];
+  out.last = hist.length ? cand.filter(id=>hist[hist.length-1].used.has(id)) : [];
+
+  // Longest-unused first; never-used (new equipment) ahead of everything.
+  // A coach-boosted exercise still jumps the queue.
+  const sorted=[...cand].sort((a,b)=>(boosted(b)-boosted(a)) || (lastUse(a)-lastUse(b)));
+  // Don't repeat last session's picks unless there's nothing else left.
+  const pool=sorted.filter(id=>!out.last.includes(id));
+  const spare=sorted.filter(id=>out.last.includes(id));
   const keep=[];
-  for(const id of out.current){
-    if(keep.length>=count) break;
-    if(getStallStatus(id))       { out.rotated.push({id, why:'stall'});  continue; }
-    if(streak(id)>=ROTATE_AFTER) { out.rotated.push({id, why:'streak'}); continue; }
-    // Don't keep two of the same pattern (e.g. two curl variants) if a
-    // different-pattern option exists.
-    if(keep.some(k=>pat(k)===pat(id)) &&
-       cand.some(c=>c!==id && !keep.includes(c) && pat(c)!==pat(id))) continue;
-    keep.push(id);
-  }
-  const rotatedIds=new Set(out.rotated.map(r=>r.id));
-  const pool=cand.filter(id=>!keep.includes(id) && !rotatedIds.has(id))
-                 .sort((a,b)=>(boosted(b)-boosted(a)) || (lastUse(a)-lastUse(b)));
-  while(keep.length<count && pool.length){
-    const used=new Set(keep.map(pat));
-    let i=pool.findIndex(id=>!used.has(pat(id)));
-    if(i<0) i=0;
-    const id=pool.splice(i,1)[0];
-    if(lastUse(id)<0) out.fresh.push(id);
-    keep.push(id);
-  }
-  // Only reuse a rotated-out lift if there's truly nothing else to pick.
-  for(const r of out.rotated){ if(keep.length<count && !keep.includes(r.id)) keep.push(r.id); }
+  const take=list=>{
+    while(keep.length<count && list.length){
+      const used=new Set(keep.map(pat));
+      let i=list.findIndex(id=>!used.has(pat(id)));   // avoid duplicate patterns
+      if(i<0) i=0;
+      const id=list.splice(i,1)[0];
+      if(lastUse(id)<0) out.fresh.push(id);
+      keep.push(id);
+    }
+  };
+  take(pool);
+  take(spare);
   out.picks=keep;
   return out;
 }
 
 function _exName(id){ const e=findEx(id); return e ? e.name : id; }
 
-// Short "why" for the session card when the engine changed something.
-function stickyReason(res){
+// Short "why" line for the session card.
+function rotateReason(res){
   if(!res || !res.picks.length) return '';
-  const added=res.picks.filter(id=>!res.current.includes(id));
   const freshNote = res.fresh.length ? ' New to you — start light and find your working weight.' : '';
-  const out = res.rotated.find(r=>!res.picks.includes(r.id));
-  if(out && added.length){
-    const why = out.why==='stall'
-      ? `${_exName(out.id)} stalled (no progress in 3 sessions), so a fresh variation restarts progress`
-      : `you've done ${_exName(out.id)} ${ROTATE_AFTER} sessions in a row — rotating for a new stimulus`;
-    return `🔄 Swapped in ${added.map(_exName).join(' + ')} — ${why}.${freshNote}`;
-  }
-  if(res.fresh.length && res.current.length) return `🆕 Added ${res.fresh.map(_exName).join(' + ')}.${freshNote}`;
-  return '';
+  if(!res.last.length) return freshNote.trim();
+  const out=res.last.filter(id=>!res.picks.includes(id));
+  if(!out.length) return freshNote.trim();
+  return `🔄 Rotating to ${res.picks.map(_exName).join(' + ')} — you did ${out.map(_exName).join(' + ')} last time.${freshNote}`;
 }
 
 // The smart-default layer for slots that need special handling. Returns an
-// array of exercise IDs, or null to fall through to plain sticky rotation.
+// array of exercise IDs, or null to fall through to plain rotation.
 // Records a short "why" for the session card.
 function smartBalancedPick(catId, cat, day, applySkip){
   const avail = id => applySkip([id]).length>0;
@@ -2728,8 +2725,8 @@ function smartBalancedPick(catId, cat, day, applySkip){
       reason('💤 Resting the hinge — quad focus today. Hamstrings are covered by your leg curl. Tap to add if you want it.');
       return [];
     }
-    const res=stickyPick(ids,1,avail,catId);
-    reason(stickyReason(res) || 'Hinge focus — this is today’s ONE heavy compound. Go hard here.');
+    const res=rotatePick(ids,1,avail,catId);
+    reason(rotateReason(res) || 'Hinge focus — this is today’s ONE heavy compound. Go hard here.');
     return res.picks;
   }
   if(day.id==='legs' && cat.id==='legs_quad'){
@@ -2737,23 +2734,23 @@ function smartBalancedPick(catId, cat, day, applySkip){
       reason('💤 Resting heavy squats — hinge focus today. Quads are covered by your leg extension. Tap to add if you want it.');
       return [];
     }
-    const res=stickyPick(ids,1,avail,catId);
-    reason(stickyReason(res) || 'Quad focus — this is today’s ONE heavy compound. Go hard here.');
+    const res=rotatePick(ids,1,avail,catId);
+    reason(rotateReason(res) || 'Quad focus — this is today’s ONE heavy compound. Go hard here.');
     return res.picks;
   }
 
-  // ── CROSS-DAY RECOVERY: if the sticky row is a heavy spinal-loading one and
-  //    your spine is already taxed from recent sessions, use a supported row.
+  // ── CROSS-DAY RECOVERY: if the rotation lands on a heavy spinal-loading row
+  //    and your spine is already taxed from recent sessions, use a supported row.
   if(cat.id==='pull_horiz'){
-    const res=stickyPick(ids,1,avail,catId);
+    const res=rotatePick(ids,1,avail,catId);
     if(recentAxial()>=3 && res.picks.length && getLoad(res.picks[0]).axial>=2){
-      const low=stickyPick(ids.filter(id=>getLoad(id).axial<=1),1,avail,catId);
+      const low=rotatePick(ids.filter(id=>getLoad(id).axial<=1),1,avail,catId);
       if(low.picks.length){
         reason(`Supported row today instead of ${_exName(res.picks[0])} — heavy hinge/squat in your recent sessions.`);
         return low.picks;
       }
     }
-    reason(stickyReason(res));
+    reason(rotateReason(res));
     return res.picks;
   }
 
@@ -2770,10 +2767,67 @@ function autoPickForCat(cat, day){
   if(smart) return smart;
   const lim = getCatLimits(cat);
   const count = cat.isMain ? 1 : (lim.min>0 ? lim.max : 0);
-  const res = stickyPick(cat.exercises.map(e=>e.id), count, id=>!skipSet.has(id), cat.id);
-  const why = stickyReason(res);
+  const res = rotatePick(cat.exercises.map(e=>e.id), count, id=>!skipSet.has(id), cat.id);
+  const why = rotateReason(res);
   if(why) _selectionReasons[cat.id]=why;
   return res.picks;
+}
+
+// ══════════════════════════════════════════════════════════════════════
+// SESSION FATIGUE CONTEXT
+// ══════════════════════════════════════════════════════════════════════
+// Where an exercise falls in your workout changes what you can lift. Machine
+// chest press done first is a different lift than the same press done after
+// three chest movements. Every logged entry is stamped with its LOG ORDER
+// (pos) and how many sets of the same muscle came before it that session
+// (preSets), measured from the order you actually logged sets — not the order
+// the app lists exercises — so jumping around for machine availability is
+// recorded truthfully. Progression then compares like with like.
+const _DB_NON_EX={skipped:1,feedback:1,deloadWeeks:1,notes:1};
+function _entriesThisSession(){
+  const out=[];
+  for(const id of Object.keys(DB||{})){
+    if(_DB_NON_EX[id] || !Array.isArray(DB[id])) continue;
+    for(const e of DB[id]){
+      if(e && e.week===S.week && e.session===S.session) out.push({id, entry:e});
+    }
+  }
+  return out;
+}
+// Sets already logged this session for muscles this exercise also trains.
+function _fatigueStamp(exId){
+  const prim=new Set(((getMeta(exId)||{}).primary)||[]);
+  const ents=_entriesThisSession().filter(x=>x.id!==exId);
+  let pre=0;
+  for(const {id, entry} of ents){
+    const p=((getMeta(id)||{}).primary)||[];
+    if(p.some(m=>prim.has(m))) pre+=(entry.sets||[]).filter(Boolean).length;
+  }
+  return {pos:ents.length+1, preSets:pre};
+}
+// Today's context for an exercise: the stamp recorded when you started it,
+// or a live estimate if you haven't logged a set for it yet.
+function currentFatigue(exId){
+  if(!S.active) return null;
+  const mine=_entriesThisSession().find(x=>x.id===exId);
+  if(mine && mine.entry.preSets!=null) return {pos:mine.entry.pos, preSets:mine.entry.preSets};
+  return _fatigueStamp(exId);
+}
+// How much more (+) or less (-) pre-fatigued today is vs a past session.
+function fatigueDelta(exId, entry){
+  const cur=currentFatigue(exId);
+  if(!cur || !entry || entry.preSets==null) return null;
+  return cur.preSets - entry.preSets;
+}
+// Pick the session to progress from: the most recent one done at a similar
+// point in the workout, so a fresh-day PR isn't compared against a tired day.
+const FATIGUE_BAND = 3;
+function pickRefSession(h, exId){
+  if(!h.length) return null;
+  const cur=currentFatigue(exId);
+  if(!cur) return h[h.length-1];
+  const recent=h.slice(-5).filter(e=>e.preSets!=null && Math.abs(e.preSets-cur.preSets)<=FATIGUE_BAND);
+  return recent.length ? recent[recent.length-1] : h[h.length-1];
 }
 
 function getSelectedForCat(catId, day){
@@ -2820,8 +2874,7 @@ function getSelectedForCat(catId, day){
   }
 
   // SMART DEFAULT: optional slots dormant, leg-day focus, cross-day row
-  // recovery, then sticky rotation for everything else (stick while
-  // progressing, rotate on stall / after ROTATE_AFTER sessions).
+  // recovery, then least-recently-used rotation for everything else.
   const picks = autoPickForCat(cat, day);
   if(picks.length || !cat.isMain) return picks;
   // A main lift came back empty. That's intentional on a leg-focus rest slot;
@@ -2910,12 +2963,45 @@ function blowoutThreshold(ex){
   return 4;
 }
 
+// Fatigue-aware wrapper around the raw progression engine. Same-lift numbers
+// are only comparable when the lift sat at a similar point in the workout, so
+// a session done 4+ same-muscle sets deeper never triggers a weight bump (and
+// never reads as a failure) — it asks you to match the weight instead.
+const FATIGUE_HOLD = 4;
+function _refTopWeight(e, ex){
+  const ws=(e.sets||[]).filter(x=>x&&x.weight!=null).map(x=>x.weight);
+  return ws.length?Math.max(...ws):ex.sw;
+}
 function getSug(ex){
+  const r=getSugRaw(ex);
+  try{ return _applyFatigueAdj(ex,r); }catch(e){ return r; }
+}
+function _applyFatigueAdj(ex, r){
+  if(!r || r.scheme==='topback') return r;
+  const h=getNonDeloadSessions(ex.id);
+  if(!h.length) return r;
+  const ref=pickRefSession(h, ex.id);
+  if(!ref) return r;
+  const add=txt=>Object.assign({}, r, {reason:(r.reason?r.reason+' ':'')+txt});
+  let out=r;
+  if(ref!==h[h.length-1]) out=Object.assign({}, out, {reason:(out.reason?out.reason+' ':'')+`Comparing against ${ref.date} — same point in the workout as today.`});
+  const d=fatigueDelta(ex.id, ref);
+  if(d==null) return out;
+  const refW=_refTopWeight(ref, ex);
+  if(d>=FATIGUE_HOLD){
+    const note=`⚖️ You are ${d} same-muscle sets deeper into today than on ${ref.date}. Match ${refW} ${ex.unit} for reps — holding here is progress, not a stall.`;
+    if(out.go && out.val>refW) return Object.assign({}, out, {txt:`${refW} ${ex.unit} — hold`, val:refW, go:false, micro:false, reason:note});
+    return Object.assign({}, out, {reason:(out.reason?out.reason+' ':'')+note});
+  }
+  if(d<=-FATIGUE_HOLD) return Object.assign({}, out, {reason:(out.reason?out.reason+' ':'')+`⚖️ Fresher today — ${Math.abs(d)} fewer same-muscle sets before this than on ${ref.date}. Push for more.`});
+  return out;
+}
+function getSugRaw(ex){
   const h=getNonDeloadSessions(ex.id);
   if(!h.length) return{txt:ex.unit==='BW'?'Bodyweight':`Start: ${ex.sw} ${ex.unit}`,go:false,val:ex.sw,
     reason:`Target: ${ex.rep} reps per set`,micro:false};
 
-  const last=h[h.length-1];
+  const last=pickRefSession(h, ex.id)||h[h.length-1];
   const top=topRep(ex);
   const threshold=blowoutThreshold(ex);
 
@@ -3285,17 +3371,47 @@ function deloadWeight(val){return Math.round(val*0.6/2.5)*2.5;}
 // ══════════════════════════════════════════════════════════════════════
 // NAVIGATION & RECOMMENDATIONS
 // ══════════════════════════════════════════════════════════════════════
+// Every logged session in order, as day ids (oldest first).
+function getLoggedDaySequence(){
+  const SKIP={skipped:1,feedback:1,deloadWeeks:1,notes:1};
+  const map=new Map();
+  for(const exId of Object.keys(DB||{})){
+    if(SKIP[exId]||!Array.isArray(DB[exId]))continue;
+    for(const e of DB[exId]){
+      if(!e||!Array.isArray(e.sets)||!e.sets.some(Boolean))continue;
+      const key=(e.week||0)*1000+(e.session||0);
+      if(e.day && !map.has(key)) map.set(key,e.day);
+    }
+  }
+  return [...map.entries()].sort((a,b)=>a[0]-b[0])
+    .map(x=>x[1]).filter(d=>DAY_SEQ.includes(d));
+}
+
 function getRecDayIdx(){
-  // Recommend the next day in the push→pull→legs cycle based on the MOST
-  // RECENT LOGGED session — not a rigid internal counter. This stays correct
-  // even if you train a day out of order: it always follows whatever you
-  // actually did last. Falls back to the last started day, then push.
-  let lastDay=null;
-  const last=getLastRealSession();
-  if(last && last.dayId) lastDay=last.dayId;
-  else if(S.lastDayId) lastDay=S.lastDayId;
-  const i=DAY_SEQ.indexOf(lastDay);
-  const nextId = i>=0 ? DAY_SEQ[(i+1)%DAY_SEQ.length] : 'push';
+  // LEARN the rotation from what you actually train instead of assuming
+  // push→pull→legs. Three different days in a row define your cycle, so the
+  // next one is whichever day started that trio. Falls back to the last time
+  // you followed this same day, then to the built-in order.
+  const seq=getLoggedDaySequence();
+  const last=seq.length?seq[seq.length-1]:S.lastDayId;
+  let nextId=null;
+  if(seq.length>=3){
+    const l3=seq.slice(-3);
+    if(new Set(l3).size===3) nextId=l3[0];
+  }
+  if(!nextId && last){
+    for(let i=seq.length-2;i>=1;i--){
+      if(seq[i-1]===last && seq[i]!==last){ nextId=seq[i]; break; }
+    }
+  }
+  if(!nextId){
+    const i=DAY_SEQ.indexOf(last);
+    nextId = i>=0 ? DAY_SEQ[(i+1)%DAY_SEQ.length] : 'push';
+  }
+  if(nextId===last && seq.length>1){
+    const i=DAY_SEQ.indexOf(last);
+    if(i>=0) nextId=DAY_SEQ[(i+1)%DAY_SEQ.length];
+  }
   const idx=DAYS.findIndex(d=>d.id===nextId);
   return idx>=0 ? idx : 0;
 }
@@ -3637,7 +3753,12 @@ function confirmSet(){
     // session can alternate deterministically off real history.
     const nativeDay=getExNativeDay(exId);
     const tech=getTechnique(exId);
+    // Stamp WHERE in the workout this lift happened, by actual logging order
+    // (see SESSION FATIGUE CONTEXT). pos = how many exercises you'd already
+    // started; preSets = sets already done for the same muscle today.
+    const fat=_fatigueStamp(exId);
     entry={week:S.week,session:S.session,day:nativeDay,date:todayStr(),
+           pos:fat.pos, preSets:fat.preSets,
            altIdx:ex.alt?getAltIdx(ex):null,deload:isCurrentDeload()?true:false,
            intent:S.sessionTag||null,
            legFocus:(nativeDay==='legs' && (S.legFocus==='quad'||S.legFocus==='hinge'))?S.legFocus:null,
@@ -3759,7 +3880,7 @@ function syncSessSheet(){
 
   const rec=getRecDayIdx();
   const rl=document.getElementById('rec-lbl');
-  if(!S.lastDayId) rl.textContent='⚡ Start here. Pull recommended';
+  if(!S.lastDayId) rl.textContent='⚡ Start here. '+DAYS[rec].label+' recommended';
   else if(rec===SESS.dayIdx) rl.textContent='⚡ Recommended based on your last session';
   else rl.textContent=`Recommended next: ${DAYS[rec].isRest?'REST':DAYS[rec].label}`;
 
@@ -4291,7 +4412,7 @@ function render(){
           rotLine1 = `Last ${day.label} session you did: ${lastIds.map(_exName).join(' + ')}`;
           if(ex.id===recId){
             rotLine2 = lastIds.includes(ex.id)
-              ? `✓ Sticking with ${ex.name} — keep progressing it`
+              ? `${ex.name} again — it's the only option left in this slot`
               : `🔄 Rotating to ${ex.name} today`;
           } else if(recId){
             rotLine2 = `Recommended: ${_exName(recId)}  (you chose ${ex.name} instead)`;
@@ -4300,7 +4421,7 @@ function render(){
           }
         } else {
           rotLine1 = 'First session in this slot. Start here.';
-          rotLine2 = 'The app sticks with this lift while it progresses, then rotates when it stalls.';
+          rotLine2 = 'The app rotates this slot every session, longest-unused first.';
         }
         mainHtml=`<div class="main-indicator">
           <div class="main-star">⭐</div>
