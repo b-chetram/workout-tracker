@@ -682,14 +682,12 @@ const EXERCISE_DB = {
         {id:'pullups_bw',name:'Pull Ups (Bodyweight)',      sets:3, rep:'8 to 12', sw:0,   unit:'BW',      equip:'bodyweight', prog:'Hit 3×12 → add weight. Full dead hang each rep.'},
         {id:'sa_pull',   name:'Single Arm Pulldown',        sets:3, rep:'10 to 12',sw:80,  unit:'lb cable',equip:'cable', prog:'Hit 3×12 → add 5 lb. Great for fixing imbalances.'},
         {id:'neutral_pull',name:'Neutral/Close-Grip Pulldown',sets:3,rep:'8 to 12',sw:150, unit:'lb',      equip:'cable', prog:'Neutral handle, pull to upper chest, full stretch at the top. Hit top of range 2 sessions → add 10 lb.'},
-        {id:'iso_pull',  name:'Hammer Strength Iso-Lateral Pulldown',sets:3,rep:'8 to 12',sw:90,unit:'lb', equip:'machine', prog:'Drive elbows down to the ribs, let the lats stretch fully at the top. Hit top of range → add weight.'},
       ]},
       { id:'pull_horiz', name:'Horizontal Pull', min:1, max:1, isMain:true, exercises:[
         {id:'bar_row',   name:'Barbell Row',                sets:3, rep:'8 to 12', sw:155, unit:'lb',      equip:'barbell', prog:'Leave 1 to 2 RIR on sets 1 to 2, push last set to failure. Hit top of range 2 sessions → add 10 lb.'},
         {id:'pendlay',   name:'Pendlay Row',                sets:3, rep:'6 to 10', sw:155, unit:'lb',      equip:'barbell', prog:'Leave 1 to 2 RIR on sets 1 to 2, push last set to failure. Hit top of range 2 sessions → add 10 lb.'},
         {id:'cable_row', name:'Seated Cable Row',           sets:3, rep:'10 to 12',sw:150, unit:'lb cable',equip:'cable', prog:'Leave 1 to 2 RIR on sets 1 to 2, push last set to failure. Hit top of range 2 sessions → add 10 lb.'},
         {id:'db_row',    name:'Dumbbell Row (Single Arm)',   sets:3, rep:'8 to 12', sw:70,  unit:'lb DB',   equip:'dumbbell', prog:'Hit 3×12 → add 5 lb. Full stretch at bottom, pull to hip.'},
-        {id:'tbar_row',  name:'Chest-Supported T-Bar Row',  sets:3, rep:'8 to 12', sw:90,  unit:'lb',      equip:'machine', prog:'Chest on the pad, pull to the lower ribs, full stretch at the bottom. No lower-back load. Hit top of range → add weight.'},
         {id:'mach_row',  name:'Seated Machine Row',         sets:3, rep:'8 to 12', sw:120, unit:'lb',      equip:'machine', prog:'Chest on the pad, squeeze the shoulder blades together at the end. Hit top of range → add weight.'},
         {id:'sa_cable_row',name:'Single-Arm Cable Row',     sets:3, rep:'10 to 12',sw:60,  unit:'lb cable',equip:'cable', prog:'Reach forward into a full lat stretch, pull the elbow back past the torso. Hit 3×12 → add 5 lb.'},
         {id:'wide_row',  name:'Wide-Grip Cable Row',        sets:3, rep:'10 to 12',sw:110, unit:'lb cable',equip:'cable', prog:'Wide bar, elbows flared, pull to the upper chest. Upper back and rear delt focus. Hit 3×12 → add 5 lb.'},
@@ -909,8 +907,6 @@ const MUSCLE_META = {
   face_pull:  {primary:['rear_delts','traps'],       secondary:[],                           mechanics:['horizontal_pull','isolation']},
   rev_fly:    {primary:['rear_delts'],               secondary:['traps'],                    mechanics:['fly','isolation']},
   neutral_pull:{primary:['lats'],                    secondary:['biceps','rear_delts'],      mechanics:['vertical_pull','compound','bilateral']},
-  iso_pull:   {primary:['lats'],                     secondary:['biceps','rear_delts'],      mechanics:['vertical_pull','compound','unilateral']},
-  tbar_row:   {primary:['lats','traps','rhomboids'], secondary:['biceps','rear_delts'],      mechanics:['horizontal_pull','compound','bilateral']},
   mach_row:   {primary:['lats','traps'],             secondary:['biceps'],                   mechanics:['horizontal_pull','compound','bilateral']},
   sa_cable_row:{primary:['lats'],                    secondary:['biceps','traps'],           mechanics:['horizontal_pull','compound','unilateral']},
   wide_row:   {primary:['traps','rhomboids','rear_delts'],secondary:['lats','biceps'],       mechanics:['horizontal_pull','compound','bilateral']},
@@ -1011,8 +1007,6 @@ const EX_LOAD = {
   cable_row:  {axial:0, pattern:'horiz_pull_sup', sfr:'high'},
   db_row:     {axial:1, pattern:'horiz_pull_sup', sfr:'high'},
   neutral_pull:{axial:0, pattern:'vert_pull',     sfr:'high'},
-  iso_pull:   {axial:0, pattern:'vert_pull',      sfr:'high'},
-  tbar_row:   {axial:0, pattern:'horiz_pull_sup', sfr:'high'},
   mach_row:   {axial:0, pattern:'horiz_pull_sup', sfr:'high'},
   sa_cable_row:{axial:0, pattern:'horiz_pull_sup',sfr:'high'},
   wide_row:   {axial:0, pattern:'horiz_pull_sup', sfr:'high'},
@@ -1099,8 +1093,8 @@ const _STRETCH_FOCUS = {
   inc_curl:1, spider_curl:1, preacher:1, mach_preacher:1, bayes_curl:1,
   db_fly:1, cable_fly:1, pec_deck:1, lth_fly:1, inc_db_press:1,
   tri_oh:1, skull:1,
-  laterals:1, lat_cable:1, sa_pull:1, db_row:1, lat_pull:1, neutral_pull:1, iso_pull:1,
-  tbar_row:1, sa_cable_row:1, straight_pull:1, cable_pullover:1
+  laterals:1, lat_cable:1, sa_pull:1, db_row:1, lat_pull:1, neutral_pull:1,
+  sa_cable_row:1, straight_pull:1, cable_pullover:1
 };
 function getExecCue(ex){
   const meta=getMeta(ex.id)||{}; const mech=meta.mechanics||[];
@@ -2946,8 +2940,8 @@ function getInc(ex, aggressive){
   // Leg isolation + hip machines
   if(['leg_curl','lying_curl','leg_ext','sl_ext','hip_add','hip_abd'].includes(ex.id)) return 5;
   // Back compounds - handle bigger jumps
-  if(['lat_pull','neutral_pull','iso_pull','bar_row','cable_row','pendlay','db_row','sa_pull',
-      'tbar_row','mach_row','wide_row'].includes(ex.id)) return aggressive?15:10;
+  if(['lat_pull','neutral_pull','bar_row','cable_row','pendlay','db_row','sa_pull',
+      'mach_row','wide_row'].includes(ex.id)) return aggressive?15:10;
   // Main presses
   if(['ohp','cgbp','bb_bench','smith_inc','mach_chest','inc_mach_press','mach_sh_press'].includes(ex.id)) return aggressive?10:5;
   // Bodyweight - not applicable but return 5 as fallback
